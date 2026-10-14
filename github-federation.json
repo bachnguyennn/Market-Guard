@@ -1,0 +1,6 @@
+{
+  "name": "marketguard-main",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:bachnguyennn/marketguard:ref:refs/heads/main",
+  "audiences": ["api://AzureADTokenExchange"]
+}
