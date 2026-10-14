@@ -1,14 +1,15 @@
 import os
 import time
 
-
 def upload_batch(file_path, blob_name):
     from azure.identity import DefaultAzureCredential
     from azure.storage.blob import BlobServiceClient
 
     account_url = os.environ["AZURE_STORAGE_ACCOUNT_URL"]
     container_name = os.environ["AZURE_STORAGE_CONTAINER"]
-    credential = DefaultAzureCredential()
+    credential = DefaultAzureCredential(
+        managed_identity_client_id=os.getenv("AZURE_CLIENT_ID")
+    )   
     service_client = BlobServiceClient(account_url, credential=credential)
     blob_client = service_client.get_blob_client(
         container=container_name,

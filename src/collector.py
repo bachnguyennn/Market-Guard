@@ -3,11 +3,27 @@ import asyncio
 import json
 
 import websockets
-from marketguard.azure_storage import upload_with_retry
+
+from .pipeline import process_batch
 
 COINBASE_URL = "wss://ws-feed.exchange.coinbase.com"
+BATCH_SIZE = 100
+FLUSH_INTERVAL = 5
 buffer = []
-async def collect_trades():
+
+
+def hand_off_buffer(task_group: asyncio.TaskGroup) -> None:
+    global buffer
+
+    if not buffer:
+        return
+
+    batch = buffer
+    buffer = []
+    task_group.create_task(process_batch(batch))
+
+
+async def collect_trades(task_group: asyncio.TaskGroup) -> None:
     subscription = {
         "type": "subscribe",
         "product_ids": ["BTC-USD", "ETH-USD"],
@@ -22,35 +38,20 @@ async def collect_trades():
             response = json.loads(message)
             if response.get("type") == "match":
                 buffer.append(response)
+                if len(buffer) >= BATCH_SIZE:
+                    hand_off_buffer(task_group)
 
 
-async def receive_trades():
+async def flush_buffer(task_group: asyncio.TaskGroup) -> None:
     while True:
-        # Simulate receiving a trade
-        await asyncio.sleep(1)
+        await asyncio.sleep(FLUSH_INTERVAL)
+        hand_off_buffer(task_group)
 
-async def flush_buffer():
-    while True:
-        await asyncio.sleep(5)
-
-        if buffer:
-            try:
-                with open("data/raw/coinbase_trades.jsonl", "a") as f:
-                    for trade in buffer:
-                        json.dump(trade, f)
-                        f.write("\n")
-
-                print(f"Saved {len(buffer)} trades")
-                buffer.clear()
-
-            except OSError as error:
-                print(f"Error saving batch: {error}")
 
 async def main():
-    await asyncio.gather(
-        collect_trades(),
-        flush_buffer()
-    )
+    async with asyncio.TaskGroup() as task_group:
+        task_group.create_task(collect_trades(task_group))
+        task_group.create_task(flush_buffer(task_group))
 
 
 if __name__ == "__main__":
