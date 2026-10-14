@@ -10,12 +10,17 @@ def transform_trades(df: DataFrame) -> DataFrame:
     into validated Silver records.
     """
 
+    return validate_trades(df).dropDuplicates(["product_id", "trade_id"])
+
+
+def validate_trades(df: DataFrame) -> DataFrame:
+    """Validate and cast trades without maintaining deduplication state."""
     return (
         df.filter(F.col("type") == "match")
-        .withColumn("price", F.col("price").cast(DecimalType(20, 8)))
-        .withColumn("size", F.col("size").cast(DecimalType(20, 8)))
-        .withColumn("trade_id", F.col("trade_id").cast(LongType()))
-        .withColumn("time", F.to_timestamp("time"))
+        .withColumn("price", F.col("price").try_cast(DecimalType(20, 8)))
+        .withColumn("size", F.col("size").try_cast(DecimalType(20, 8)))
+        .withColumn("trade_id", F.col("trade_id").try_cast(LongType()))
+        .withColumn("time", F.try_to_timestamp("time"))
         .filter(
             F.col("trade_id").isNotNull()
             & F.col("product_id").isNotNull()
@@ -23,7 +28,6 @@ def transform_trades(df: DataFrame) -> DataFrame:
             & (F.col("size") > 0)
             & F.col("time").isNotNull()
         )
-        .dropDuplicates(["product_id", "trade_id"])
     )
 
 

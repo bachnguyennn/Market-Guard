@@ -2,3 +2,5 @@ websockets
 azure-identity
 azure-storage-blob
 pyspark
+delta-spark
+confluent-kafka
