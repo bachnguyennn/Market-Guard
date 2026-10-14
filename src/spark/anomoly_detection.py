@@ -36,6 +36,31 @@ def calculate_price_returns(gold_df: DataFrame) -> DataFrame:
     )
 
 
+def detect_price_jumps(
+    returns_df: DataFrame,
+    threshold: float = 0.02,
+) -> DataFrame:
+    """
+    Flag absolute one-minute returns greater than the threshold.
+
+    Null returns, including those caused by missing minutes, are
+    not treated as confirmed price jumps.
+    """
+    if threshold < 0:
+        raise ValueError("threshold must be non-negative")
+
+    return (
+        returns_df.withColumn(
+            "is_price_jump",
+            F.coalesce(
+                F.abs(F.col("price_return")) > F.lit(threshold),
+                F.lit(False),
+            ),
+        )
+        .orderBy("product_id", "minute_start")
+    )
+
+
 def detect_volume_spikes(
     gold_df: DataFrame,
     lookback: int = 5,
@@ -131,3 +156,60 @@ def calculate_rolling_volatility(
         .orderBy("product_id", "minute_start")
     )
 
+def detect_statistical_price_jumps(
+    returns_df: DataFrame,
+    lookback: int = 5,
+    threshold: float = 3.0,
+) -> DataFrame:
+    """Detect unusually large returns relative to recent product history."""
+    if lookback < 2:
+        raise ValueError("lookback must be at least 2")
+    if threshold < 0:
+        raise ValueError("threshold must be non-negative")
+
+    history_window = (
+        Window.partitionBy("product_id")
+        .orderBy("minute_start")
+        .rowsBetween(-lookback, -1)
+    )
+
+    with_history = (
+        returns_df.withColumn(
+            "rolling_mean_return",
+            F.avg("price_return").over(history_window),
+        )
+        .withColumn(
+            "rolling_std_return",
+            F.stddev_samp("price_return").over(history_window),
+        )
+        .withColumn(
+            "return_history_count",
+            F.count("price_return").over(history_window),
+        )
+    )
+
+    valid_history = (
+        F.col("price_return").isNotNull()
+        & (F.col("return_history_count") >= lookback)
+        & F.col("rolling_std_return").isNotNull()
+        & (F.col("rolling_std_return") > 0)
+    )
+
+    return (
+        with_history.withColumn(
+            "return_zscore",
+            F.when(
+                valid_history,
+                (F.col("price_return") - F.col("rolling_mean_return"))
+                / F.col("rolling_std_return"),
+            ),
+        )
+        .withColumn(
+            "is_statistical_price_jump",
+            F.coalesce(
+                F.abs(F.col("return_zscore")) > F.lit(threshold),
+                F.lit(False),
+            ),
+        )
+        .orderBy("product_id", "minute_start")
+    )

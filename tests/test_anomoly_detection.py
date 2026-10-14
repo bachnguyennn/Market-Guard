@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.spark.anomoly_detection import (
     calculate_price_returns,
     calculate_rolling_volatility,
+    detect_price_jumps,
+    detect_statistical_price_jumps,
     detect_volume_spikes,
 )
 
@@ -202,3 +204,116 @@ def test_price_return_is_null_across_a_missing_minute(spark):
 
     assert results[0].price_return is None
     assert results[1].price_return is None
+
+
+def test_detect_price_jumps_flags_positive_and_negative_moves(spark):
+    start = datetime(2026, 10, 14, 12, 0)
+    returns_df = spark.createDataFrame(
+        [
+            ("BTC-USD", start, None),
+            ("BTC-USD", start + timedelta(minutes=1), 0.01),
+            ("BTC-USD", start + timedelta(minutes=2), 0.02),
+            ("BTC-USD", start + timedelta(minutes=3), 0.021),
+            ("BTC-USD", start + timedelta(minutes=4), -0.03),
+            ("ETH-USD", start, -0.01),
+        ],
+        "product_id string, minute_start timestamp, price_return double",
+    )
+
+    results = detect_price_jumps(returns_df, threshold=0.02).collect()
+    flags = {
+        (row.product_id, row.minute_start): row.is_price_jump
+        for row in results
+    }
+
+    assert flags[("BTC-USD", start)] is False
+    assert flags[("BTC-USD", start + timedelta(minutes=1))] is False
+    assert flags[("BTC-USD", start + timedelta(minutes=2))] is False
+    assert flags[("BTC-USD", start + timedelta(minutes=3))] is True
+    assert flags[("BTC-USD", start + timedelta(minutes=4))] is True
+    assert flags[("ETH-USD", start)] is False
+
+
+def test_detect_price_jumps_rejects_negative_threshold(spark):
+    empty_returns_df = spark.createDataFrame(
+        [],
+        "product_id string, minute_start timestamp, price_return double",
+    )
+
+    with pytest.raises(ValueError, match="threshold must be non-negative"):
+        detect_price_jumps(empty_returns_df, threshold=-0.01)
+
+
+def test_detect_statistical_price_jumps_uses_historical_returns(spark):
+    start = datetime(2026, 10, 14, 12, 0)
+    rows = [
+        ("BTC-USD", start + timedelta(minutes=index), price_return)
+        for index, price_return in enumerate([0.01, -0.01, 0.02, -0.02, 0.00, 0.50])
+    ]
+    rows.extend(
+        ("ETH-USD", start + timedelta(minutes=index), price_return)
+        for index, price_return in enumerate([0.02, -0.02, 0.01, -0.01, 0.00, -0.50])
+    )
+    rows.extend(
+        ("SOL-USD", start + timedelta(minutes=index), 0.01)
+        for index in range(6)
+    )
+    returns_df = spark.createDataFrame(
+        rows,
+        "product_id string, minute_start timestamp, price_return double",
+    )
+
+    results = {
+        (row.product_id, row.minute_start): row
+        for row in detect_statistical_price_jumps(
+            returns_df,
+            lookback=5,
+            threshold=3.0,
+        ).collect()
+    }
+
+    btc_jump = results[("BTC-USD", start + timedelta(minutes=5))]
+    assert btc_jump.return_history_count == 5
+    assert btc_jump.return_zscore > 3.0
+    assert btc_jump.is_statistical_price_jump is True
+
+    eth_jump = results[("ETH-USD", start + timedelta(minutes=5))]
+    assert eth_jump.return_zscore < -3.0
+    assert eth_jump.is_statistical_price_jump is True
+
+    flat_history = results[("SOL-USD", start + timedelta(minutes=5))]
+    assert flat_history.return_zscore is None
+    assert flat_history.is_statistical_price_jump is False
+
+    assert all(
+        results[("BTC-USD", start + timedelta(minutes=index))]
+        .is_statistical_price_jump
+        is False
+        for index in range(5)
+    )
+
+
+@pytest.mark.parametrize(
+    ("lookback", "threshold", "message"),
+    [
+        (1, 3.0, "lookback must be at least 2"),
+        (5, -1.0, "threshold must be non-negative"),
+    ],
+)
+def test_detect_statistical_price_jumps_validates_parameters(
+    spark,
+    lookback,
+    threshold,
+    message,
+):
+    empty_returns_df = spark.createDataFrame(
+        [],
+        "product_id string, minute_start timestamp, price_return double",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        detect_statistical_price_jumps(
+            empty_returns_df,
+            lookback=lookback,
+            threshold=threshold,
+        )
