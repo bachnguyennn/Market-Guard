@@ -39,12 +39,41 @@ Delta tables and checkpoints. Each stage is verified separately; these writes
 are not a single transaction across all three outputs.
 
 The existing `src` tree is installed as the `marketguard` Python package, so the
-lesson modules remain in place. The local Kafka console stream and incremental
-Delta stream are separate entry points below; this finite command reads local
-Bronze files and does not start collection, upload to Azure, or run a dashboard.
+lesson modules remain in place. The local Kafka console stream, incremental
+Delta stream, and dashboard are separate entry points below; this finite command
+reads local Bronze files and does not start collection or upload to Azure.
 
 ```sh
 .venv/bin/python -m pytest tests/test_run_pipeline.py -v
+```
+
+## Gold dashboard
+
+Generate the batch outputs, then launch the Streamlit MVP from the repository
+directory:
+
+```sh
+.venv/bin/python -m pip install -e .
+.venv/bin/python -m marketguard.run_pipeline
+.venv/bin/python -m streamlit run src/dashboard/app.py
+```
+
+Open the local URL printed by Streamlit. The page reads the existing Parquet
+dataset at `data/batch_output/gold` with pandas and PyArrow; it needs no running
+Spark session, database, or API. Change the Gold path in the sidebar to inspect
+another batch. The product selector filters total trade counts, the notional
+volume chart, and the detail table. All minute buckets are displayed in UTC.
+
+`load_gold_data()` validates required columns and timestamps and preserves
+financial Decimal values. Only the chart copy is converted to numeric plotting
+values. Missing, invalid, or empty datasets are explained on the page. This MVP
+shows saved batch outputs; it does not automatically collect new trades.
+
+The existing `src` directory installs as `marketguard`, so the dashboard source
+path here is `src/dashboard/app.py`.
+
+```sh
+.venv/bin/python -m pytest tests/test_dashboard.py -v
 ```
 
 ## Local file streaming

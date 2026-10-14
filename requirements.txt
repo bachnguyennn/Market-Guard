@@ -4,3 +4,6 @@ azure-storage-blob
 pyspark
 delta-spark
 confluent-kafka
+pandas
+pyarrow
+streamlit

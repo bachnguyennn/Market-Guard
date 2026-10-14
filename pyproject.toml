@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 dynamic = ["dependencies"]
 
 [tool.setuptools]
-packages = ["marketguard", "marketguard.spark", "marketguard.kafka"]
+packages = ["marketguard", "marketguard.spark", "marketguard.kafka", "marketguard.dashboard"]
 package-dir = {marketguard = "src"}
 
 [tool.setuptools.dynamic]
