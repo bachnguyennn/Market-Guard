@@ -25,3 +25,54 @@ jobs:
 
       - name: Verify Azure account
         run: az account show --output table
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name acrmarketguard39a9dc63
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -t acrmarketguard39a9dc63.azurecr.io/marketguard-collector:${{ github.sha }} \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push \
+            acrmarketguard39a9dc63.azurecr.io/marketguard-collector:${{ github.sha }}
+
+      - name: Deploy new image
+        run: |
+          az containerapp update \
+            --name marketguard-collector \
+            --resource-group rg-marketguard-dev \
+            --image acrmarketguard39a9dc63.azurecr.io/marketguard-collector:${{ github.sha }}
+
+      - name: Check provisioning state
+        run: |
+          STATE=$(az containerapp show \
+            --name marketguard-collector \
+            --resource-group rg-marketguard-dev \
+            --query properties.provisioningState \
+            --output tsv)
+          echo "Provisioning state: $STATE"
+          test "$STATE" = "Succeeded"
+
+      - name: Verify deployed image
+        run: |
+          EXPECTED_IMAGE="acrmarketguard39a9dc63.azurecr.io/marketguard-collector:${{ github.sha }}"
+          REVISION=$(az containerapp show \
+            --name marketguard-collector \
+            --resource-group rg-marketguard-dev \
+            --query properties.latestRevisionName \
+            --output tsv)
+          ACTUAL_IMAGE=$(az containerapp revision show \
+            --name marketguard-collector \
+            --resource-group rg-marketguard-dev \
+            --revision "$REVISION" \
+            --query properties.template.containers[0].image \
+            --output tsv)
+          echo "Revision: $REVISION"
+          echo "Expected image: $EXPECTED_IMAGE"
+          echo "Actual image: $ACTUAL_IMAGE"
+          test "$ACTUAL_IMAGE" = "$EXPECTED_IMAGE"
