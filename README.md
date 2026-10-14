@@ -62,18 +62,33 @@ Open the local URL printed by Streamlit. The page reads the existing Parquet
 dataset at `data/batch_output/gold` with pandas and PyArrow; it needs no running
 Spark session, database, or API. Change the Gold path in the sidebar to inspect
 another batch. The product selector filters total trade counts, the notional
-volume chart, and the detail table. All minute buckets are displayed in UTC.
+volume chart, and the detail table in the Market Overview tab. All minute buckets
+are displayed in UTC.
 
 `load_gold_data()` validates required columns and timestamps and preserves
 financial Decimal values. Only the chart copy is converted to numeric plotting
 values. Missing, invalid, or empty datasets are explained on the page. This MVP
 shows saved batch outputs; it does not automatically collect new trades.
 
+The Anomaly Alerts tab reads `data/batch_output/anomalies`, with a separate path
+field in the sidebar and the same product selector. It counts only rows where
+`is_anomaly` is true, sorts alerts newest first, and shows available signal scores
+and an explanation for each alert. A dataset without the combined flag can use
+`is_volume_spike` and `is_statistical_price_jump` instead. Missing Boolean values
+do not count as alerts, and string flags are rejected.
+
+Two anomaly-output rows do not mean two alerts: the current saved sample has zero
+flagged rows and displays "No anomalies detected in the selected period."
+Alerts describe statistical irregularities for investigation. Missing or invalid
+anomaly data is reported inside its tab while the market overview stays usable.
+Parquet loading and pure product/alert filtering live in
+`src/dashboard/data_loader.py`.
+
 The existing `src` directory installs as `marketguard`, so the dashboard source
 path here is `src/dashboard/app.py`.
 
 ```sh
-.venv/bin/python -m pytest tests/test_dashboard.py -v
+.venv/bin/python -m pytest tests/test_dashboard.py tests/test_dashboard_data.py -v
 ```
 
 ## Local file streaming
