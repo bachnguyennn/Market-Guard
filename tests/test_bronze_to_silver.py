@@ -20,6 +20,7 @@ def spark():
         .master("local[1]")
         .config("spark.pyspark.python", sys.executable)
         .config("spark.pyspark.driver.python", sys.executable)
+        .config("spark.sql.session.timeZone", "UTC")
         .getOrCreate()
     )
     yield session

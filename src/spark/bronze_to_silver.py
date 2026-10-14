@@ -34,14 +34,21 @@ def main():
         .master("local[*]")
         .getOrCreate()
     )
+    spark.conf.set("spark.sql.session.timeZone", "UTC")
 
     try:
         bronze_df = spark.read.json("data/spark_input")
+        bronze_count = bronze_df.count()
+        print(f"Bronze records: {bronze_count}")
+
         silver_df = transform_trades(bronze_df)
 
         silver_df.printSchema()
         silver_count = silver_df.count()
         print(f"Silver records before write: {silver_count}")
+
+        excluded_count = bronze_count - silver_count
+        print(f"Excluded records: {excluded_count}")
 
         silver_df.write.mode("overwrite").parquet("data/silver")
 
@@ -53,8 +60,41 @@ def main():
             raise RuntimeError(
                 "Silver record count changed after writing Parquet"
             )
+
+        gold_df = calculate_market_metrics(saved_silver_df)
+        gold_df.show(truncate=False)
+        gold_df.write.mode("overwrite").parquet("data/gold")
     finally:
         spark.stop()
+
+
+def calculate_market_metrics(
+    silver_df: DataFrame,
+) -> DataFrame:
+    """
+    Aggregate validated trades into
+    one-minute market metrics.
+    """
+
+    return (
+        silver_df.withColumn("notional", F.col("price") * F.col("size"))
+        .groupBy("product_id", F.window(F.col("time"), "1 minute"))
+        .agg(
+            F.count("*").alias("trade_count"),
+            F.sum("size").alias("base_volume"),
+            F.sum("notional").alias("notional_volume"),
+        )
+        .withColumn("vwap", F.col("notional_volume") / F.col("base_volume"))
+        .select(
+            "product_id",
+            F.col("window.start").alias("minute_start"),
+            "trade_count",
+            "base_volume",
+            "notional_volume",
+            "vwap",
+        )
+        .orderBy("product_id", "minute_start")
+    )
 
 
 if __name__ == "__main__":
