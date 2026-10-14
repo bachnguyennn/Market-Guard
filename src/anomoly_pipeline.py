@@ -8,6 +8,7 @@ from .spark.anomoly_detection import (
     detect_statistical_price_jumps,
     detect_volume_spikes,
 )
+from .spark.data_quality import assign_continuous_segments, detect_missing_minutes
 
 
 def build_anomaly_table(gold_df: DataFrame) -> DataFrame:
@@ -16,7 +17,8 @@ def build_anomaly_table(gold_df: DataFrame) -> DataFrame:
     one-minute Gold market metrics.
     """
 
-    volume_df = detect_volume_spikes(gold_df)
+    quality_df = assign_continuous_segments(detect_missing_minutes(gold_df))
+    volume_df = detect_volume_spikes(quality_df)
     returns_df = calculate_price_returns(volume_df)
     scored_df = detect_statistical_price_jumps(returns_df)
 
@@ -42,6 +44,9 @@ def build_anomaly_table(gold_df: DataFrame) -> DataFrame:
             "base_volume",
             "notional_volume",
             "vwap",
+            "missing_minutes",
+            "is_data_gap",
+            "segment_id",
             "volume_zscore",
             "price_return",
             "return_zscore",

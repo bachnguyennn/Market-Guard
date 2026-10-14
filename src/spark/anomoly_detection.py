@@ -11,7 +11,10 @@ def calculate_price_returns(gold_df: DataFrame) -> DataFrame:
     Returns are null when the previous observation is missing,
     is not exactly one minute earlier, or has a zero VWAP.
     """
-    product_window = Window.partitionBy("product_id").orderBy("minute_start")
+    partition_columns = ["product_id"]
+    if "segment_id" in gold_df.columns:
+        partition_columns.append("segment_id")
+    product_window = Window.partitionBy(*partition_columns).orderBy("minute_start")
     previous_vwap = F.lag("vwap").over(product_window)
     previous_minute = F.lag("minute_start").over(product_window)
     is_next_minute = (
@@ -73,8 +76,11 @@ def detect_volume_spikes(
     if lookback < 2:
         raise ValueError("lookback must be at least 2")
 
+    partition_columns = ["product_id"]
+    if "segment_id" in gold_df.columns:
+        partition_columns.append("segment_id")
     history_window = (
-        Window.partitionBy("product_id")
+        Window.partitionBy(*partition_columns)
         .orderBy("minute_start")
         .rowsBetween(-lookback, -1)
     )
@@ -128,8 +134,11 @@ def calculate_rolling_volatility(
     if lookback < 2:
         raise ValueError("lookback must be at least 2")
 
+    partition_columns = ["product_id"]
+    if "segment_id" in returns_df.columns:
+        partition_columns.append("segment_id")
     history_window = (
-        Window.partitionBy("product_id")
+        Window.partitionBy(*partition_columns)
         .orderBy("minute_start")
         .rowsBetween(-lookback, -1)
     )
@@ -167,8 +176,11 @@ def detect_statistical_price_jumps(
     if threshold < 0:
         raise ValueError("threshold must be non-negative")
 
+    partition_columns = ["product_id"]
+    if "segment_id" in returns_df.columns:
+        partition_columns.append("segment_id")
     history_window = (
-        Window.partitionBy("product_id")
+        Window.partitionBy(*partition_columns)
         .orderBy("minute_start")
         .rowsBetween(-lookback, -1)
     )
