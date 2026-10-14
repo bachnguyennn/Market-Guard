@@ -3,6 +3,7 @@ import asyncio
 import json
 
 import websockets
+from marketguard.azure_storage import upload_with_retry
 
 COINBASE_URL = "wss://ws-feed.exchange.coinbase.com"
 buffer = []
@@ -15,7 +16,6 @@ async def collect_trades():
 
     async with websockets.connect(COINBASE_URL) as websocket:
         
-    # Hint: json.dumps()
         await websocket.send(json.dumps(subscription))
 
         async for message in websocket:
@@ -35,7 +35,7 @@ async def flush_buffer():
 
         if buffer:
             try:
-                with open("trades.jsonl", "a") as f:
+                with open("data/raw/coinbase_trades.jsonl", "a") as f:
                     for trade in buffer:
                         json.dump(trade, f)
                         f.write("\n")
@@ -51,3 +51,7 @@ async def main():
         collect_trades(),
         flush_buffer()
     )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
