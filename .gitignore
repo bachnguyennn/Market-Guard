@@ -3,5 +3,13 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
-data/
+.env.*
+.streamlit/secrets.toml
+.venv-dashboard/
+/data/*
+!/data/demo/
+/data/demo/*
+!/data/demo/gold.parquet
+!/data/demo/anomalies.parquet
+!/data/demo/README.md
 *.egg-info/
