@@ -1,5 +1,5 @@
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
-from datetime import datetime, timezone
 
 
 def parse_trade(raw_message: dict) -> dict | None:
@@ -7,10 +7,10 @@ def parse_trade(raw_message: dict) -> dict | None:
     Normalize a Coinbase trade message.
 
     Return None for messages that are not trades.
-    Raise an appropriate error for malformed trade data.
+    Raise TypeError for invalid input types and ValueError for invalid values.
     """
     if not isinstance(raw_message, dict):
-        raise ValueError("Malformed trade data: expected a dictionary.")
+        raise TypeError("Malformed trade data: expected a dictionary.")
     if raw_message.get("type") != "match":
         return None
 
@@ -31,7 +31,7 @@ def parse_trade(raw_message: dict) -> dict | None:
         value = raw_message[field]
 
         if not isinstance(value, str):
-            raise ValueError(f"{field} must be a numeric string")
+            raise TypeError(f"{field} must be a numeric string")
 
         try:
             number = Decimal(value)
@@ -42,10 +42,10 @@ def parse_trade(raw_message: dict) -> dict | None:
             raise ValueError(f"{field} must be finite and greater than zero")
     value = raw_message["time"]
     if not isinstance(value, str):
-        raise ValueError("time must be a string")
+        raise TypeError("time must be a string")
 
     try:
-        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        timestamp = datetime.fromisoformat(value)
     except ValueError:
         raise ValueError("time must be an ISO timestamp") from None
 
@@ -60,6 +60,6 @@ def parse_trade(raw_message: dict) -> dict | None:
         "size": raw_message["size"],
         "side": raw_message["side"],
         "event_time": timestamp.isoformat(),
-        "ingested_at": datetime.now(timezone.utc).isoformat(),
+        "ingested_at": datetime.now(UTC).isoformat(),
         "source": "coinbase",
     }
