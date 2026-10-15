@@ -1,11 +1,11 @@
 import json
 import os
+import sys
 from decimal import Decimal
 from pathlib import Path
-import sys
 
-from delta import configure_spark_with_delta_pip
 import pytest
+from delta import configure_spark_with_delta_pip
 from pyspark.sql import SparkSession
 
 sys.path.insert(0, str(Path(__file__).parent.parent))

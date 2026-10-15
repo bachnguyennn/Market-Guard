@@ -1,8 +1,8 @@
+import json
+import re
 from collections.abc import Mapping
 from hashlib import sha256
 from io import BytesIO
-import json
-import re
 from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd

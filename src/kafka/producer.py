@@ -1,5 +1,6 @@
 
 import json
+
 from confluent_kafka import Producer
 
 TOPIC = "marketguard.trades.raw"

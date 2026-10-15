@@ -1,13 +1,13 @@
+import json
 from decimal import Decimal
 from hashlib import sha256
-import json
 from pathlib import Path
 from unittest.mock import Mock
 from urllib.parse import urlencode
 
-from azure.core.exceptions import HttpResponseError
 import pandas as pd
 import pytest
+from azure.core.exceptions import HttpResponseError
 from marketguard.dashboard import azure_loader
 from streamlit.testing.v1 import AppTest
 

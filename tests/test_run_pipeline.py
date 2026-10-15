@@ -1,13 +1,12 @@
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-from pyspark.sql import SparkSession
-
 from marketguard.run_pipeline import run_batch
+from pyspark.sql import SparkSession
 
 
 @pytest.fixture(scope="module")

@@ -1,6 +1,6 @@
+import sys
 from importlib import import_module, util
 from pathlib import Path
-import sys
 
 
 def main() -> None:

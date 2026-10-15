@@ -1,8 +1,8 @@
 import os
+import sys
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-import sys
 
 import pytest
 from pyspark.sql import SparkSession
@@ -49,7 +49,7 @@ def test_detect_volume_spikes_uses_product_history(spark):
         for index, volume in enumerate(["100", "110", "90", "100", "100", "1000"])
     ]
     rows.extend(
-        ("ETH-USD", start + timedelta(minutes=index), Decimal("200"))
+        ("ETH-USD", start + timedelta(minutes=index), Decimal(200))
         for index in range(6)
     )
     schema = StructType(
@@ -73,7 +73,7 @@ def test_detect_volume_spikes_uses_product_history(spark):
 
     btc_spike = results[("BTC-USD", start + timedelta(minutes=5))]
     assert btc_spike.history_count == 5
-    assert btc_spike.volume_zscore > Decimal("3")
+    assert btc_spike.volume_zscore > Decimal(3)
     assert btc_spike.is_volume_spike is True
 
     assert all(

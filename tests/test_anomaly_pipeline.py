@@ -1,7 +1,7 @@
 import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-import sys
 
 import pytest
 from pyspark.sql import SparkSession

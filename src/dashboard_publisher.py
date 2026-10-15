@@ -1,7 +1,7 @@
 import argparse
+import json
 from datetime import UTC, datetime
 from hashlib import sha256
-import json
 from pathlib import Path
 from urllib.parse import urlsplit
 

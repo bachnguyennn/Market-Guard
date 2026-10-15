@@ -1,12 +1,18 @@
-from decimal import Decimal
 import json
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import Mock
 
 import pandas as pd
 import pytest
 from azure.core.exceptions import HttpResponseError, ResourceExistsError
-from marketguard.dashboard_publisher import BLOB_NAMES, CONTAINER, MANIFEST_NAME, export_dashboard, publish_exports
+from marketguard.dashboard_publisher import (
+    BLOB_NAMES,
+    CONTAINER,
+    MANIFEST_NAME,
+    export_dashboard,
+    publish_exports,
+)
 
 
 @pytest.fixture

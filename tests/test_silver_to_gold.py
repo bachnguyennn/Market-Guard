@@ -1,7 +1,7 @@
 import os
+import sys
 from decimal import Decimal
 from pathlib import Path
-import sys
 
 import pytest
 from pyspark.sql import SparkSession

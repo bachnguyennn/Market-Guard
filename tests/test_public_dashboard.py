@@ -4,7 +4,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from marketguard.dashboard import app
-from marketguard.dashboard.data_loader import load_anomaly_data, load_gold_data, select_alerts
+from marketguard.dashboard.data_loader import (
+    load_anomaly_data,
+    load_gold_data,
+    select_alerts,
+)
 from streamlit.testing.v1 import AppTest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

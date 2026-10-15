@@ -63,7 +63,11 @@ def main(public_demo: bool = False) -> None:
         except FileNotFoundError:
             azure_settings = None
         if azure_settings is not None:
-            from marketguard.dashboard.azure_loader import AzureSnapshotError, clear_azure_cache, load_azure_snapshot
+            from marketguard.dashboard.azure_loader import (
+                AzureSnapshotError,
+                clear_azure_cache,
+                load_azure_snapshot,
+            )
 
             st.info(
                 "Azure analytics snapshot — not a continuous live feed. "

@@ -3,9 +3,8 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from streamlit.testing.v1 import AppTest
-
 from marketguard.dashboard import app
+from streamlit.testing.v1 import AppTest
 
 
 @pytest.fixture

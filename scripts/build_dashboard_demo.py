@@ -1,7 +1,7 @@
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pandas as pd
@@ -9,7 +9,10 @@ from marketguard.anomoly_pipeline import build_anomaly_table
 from marketguard.demo_data import synthetic_market_history
 from marketguard.demo_verifier import verify_gold_records
 from marketguard.run_pipeline import write_and_verify
-from marketguard.spark.bronze_to_silver import calculate_market_metrics, transform_trades
+from marketguard.spark.bronze_to_silver import (
+    calculate_market_metrics,
+    transform_trades,
+)
 from pyspark.sql import SparkSession
 
 

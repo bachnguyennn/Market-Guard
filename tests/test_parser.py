@@ -1,5 +1,10 @@
-
 import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from parser import parse_trade
 
 
 def save_event(event: dict, file_path: str) -> None:
@@ -11,18 +16,8 @@ def save_event(event: dict, file_path: str) -> None:
         with open(file_path, "a") as f:
             json.dump(event, f)
             f.write("\n")
-    except Exception as e:
-        print(f"Error saving event: {e}")
-        
-    pass
-
-
-from pathlib import Path
-import sys
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from parser import parse_trade
+    except (OSError, TypeError) as e:
+        print(f"Error saving event: {e}", file=sys.stderr)
 
 
 def test_heartbeat_ignored():

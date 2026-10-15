@@ -1,6 +1,7 @@
 import os
 import time
 
+
 def upload_batch(file_path, blob_name):
     from azure.identity import DefaultAzureCredential
     from azure.storage.blob import BlobServiceClient
