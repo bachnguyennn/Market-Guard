@@ -2,6 +2,195 @@
 
 Repository: https://github.com/bachnguyennn/Market-Guard
 
+## Run the finished local demo
+
+Prerequisites: Python 3.11+, a Java 17+ runtime, Docker, and free local ports
+9092 (Kafka) and 8502 (demo dashboard). From this repository directory:
+
+```sh
+python -m venv .venv
+.venv/bin/python -m pip install -e .
+./scripts/demo.sh
+```
+
+Open **http://127.0.0.1:8502** when the script prints `MarketGuard demo ready`.
+The dashboard is automatically configured to read this run's actual outputs.
+No manual sidebar path changes, Azure credentials, or cloud resources are
+required. First startup may download the Kafka image and Spark JVM packages.
+
+The script checks Docker, starts `marketguard-kafka` (or creates it using
+`apache/kafka:4.3.1`), waits for broker metadata, and creates an isolated
+two-partition demo topic. A separate Spark worker processes Kafka batches into
+Silver Delta. The verifier waits for both the corresponding Spark checkpoint
+completion and the expected Delta count, rather than using a fixed startup
+sleep. It then checks these scenarios:
+
+| Scenario | Expected Silver rows |
+| --- | ---: |
+| Publish ten unique trades | 10 |
+| Publish those same ten again; wait for their offsets to complete | 10 |
+| Restart the worker with the same checkpoint | 10 |
+| Complete 15 consecutive minutes for each trading pair | 30 |
+
+The deterministic data has nonzero historical variance, a BTC volume spike at
+12:12 UTC, and an ETH price jump at 12:13 UTC. The script verifies both signals,
+refreshes Gold/anomaly Parquet, and starts Streamlit only after the files are
+readable. `summary.json`, `worker.log`, `dashboard.log`, the Delta table, and the
+Parquet outputs are saved in `data/streaming/final_demo_<id>/`.
+
+Use Ctrl+C to stop the demo's Spark worker and Streamlit child processes. The
+Kafka container and demo artifacts stay available for inspection. Each new run
+uses a fresh topic/table/checkpoint; earlier experiments are retained.
+
+```sh
+./scripts/demo.sh --verify-only
+./scripts/demo.sh --port 8503 --timeout 240
+```
+
+`--verify-only` runs the same ingestion/replay/anomaly checks and exits after
+cleaning up its worker. `--timeout` bounds each Silver readiness check; broker
+and dashboard health checks have their own bounded deadlines. `--run-dir` must
+name a new directory. `MARKETGUARD_PYTHON` can select another installed Python
+environment. On failure, inspect the run's logs rather than deleting only a
+checkpoint or table.
+
+### Architecture and deployment scope
+
+```mermaid
+flowchart LR
+    Synthetic[Deterministic Coinbase-style events] --> Kafka[Local Kafka: two partitions]
+    Kafka --> Spark[Spark Structured Streaming]
+    Spark --> Delta[Delta Silver: insert-only MERGE]
+    Delta --> Refresh[Finite Gold and anomaly refresh]
+    Refresh --> Parquet[Gold and anomaly Parquet]
+    Parquet --> Dashboard[Streamlit: metrics and alerts]
+    Coinbase[Live Coinbase WebSocket] --> Collector[Existing Azure collector path]
+    Collector --> Blob[Azure Blob Bronze archive]
+```
+
+The local Kafka/Spark demo and the existing Azure archive collector are distinct
+execution paths. This command publishes synthetic events locally; it does not
+start the live WebSocket collector, upload to Azure, or imply that Spark and the
+dashboard are continuously cloud-hosted. The architecture can later connect the
+WebSocket producer to Kafka, while retaining Blob Storage as the Bronze archive.
+
+### Screenshots
+
+Actual local demo outputs, with 15 minutes per pair:
+
+![Market overview with a BTC volume spike](docs/screenshots/market-overview.png)
+
+![Statistical volume and price alerts](docs/screenshots/anomaly-alerts.png)
+
+To recreate these from a running demo:
+
+```sh
+.venv/bin/python -m pip install -e '.[screenshots]'
+.venv/bin/python -m playwright install chromium
+.venv/bin/python -m marketguard.dashboard.capture
+```
+
+Alternatively, pass `--browser-executable <path-to-Chrome>` to the capture
+command to use an existing Chrome installation.
+
+### Automated verification
+
+```sh
+.venv/bin/python -m pytest tests/test_local_demo.py tests/test_dashboard.py tests/test_dashboard_data.py
+MARKETGUARD_KAFKA_E2E=1 .venv/bin/python -m pytest tests/test_demo_e2e.py -v
+.venv/bin/python -m pytest tests/test_kafka_to_delta.py -v
+```
+
+The opt-in end-to-end test invokes `scripts/demo.sh --verify-only` against real
+Docker/Kafka and Spark/Delta, verifies replay counts and both anomaly scenarios,
+then renders Streamlit with the generated files. GitHub Actions has a separate
+`local-demo` job that runs this test. The smaller worker suite also verifies a
+failure after Delta commit but before Spark checkpoint completion.
+
+### Trade-offs and limitations
+
+- One local Kafka broker and one writer per Delta table; this demo is not an HA deployment.
+- Spark tracks Kafka offsets in its checkpoint. Separate Python consumers do not commit on its behalf.
+- Insert-only MERGE provides replay tolerance for `(product_id, trade_id)`; conflicting existing trades are retained.
+- Gold/anomaly/dashboard files are batch snapshots, not a continuously refreshed or globally atomic view.
+- Late-event correction, within-minute ingestion-health checks, and incremental Gold updates remain future work.
+- Gap-aware segments prevent historical windows crossing observed gaps; malformed/invalid records are skipped by this exercise's validation.
+- Alerts are statistical indicators for investigation, not findings of fraud or manipulation.
+
+The following sections document the individual lesson commands and batch tools.
+
+## Kafka to Delta and dashboard demo
+
+The local streaming path is:
+
+```text
+Synthetic events → Kafka (two partitions) → Spark foreachBatch → Silver Delta
+                                                              ↓ batch refresh
+                                    Streamlit ← Gold + anomaly Parquet
+```
+
+With the package installed and the local broker running, run the complete finite
+demo from the repository directory:
+
+```sh
+docker start marketguard-kafka
+.venv/bin/python -m marketguard.demo_kafka_to_delta
+```
+
+The demo creates a dedicated Kafka topic, a fresh Delta table, and a matching
+checkpoint under a new `data/streaming/demo_<id>` directory. It publishes ten
+unique trades, republishes them, restarts Spark with the same checkpoint, and
+adds five new trades. It asserts Silver counts `10 → 10 → 10 → 15`, verifies
+unique trade keys, and writes Gold/anomaly Parquet for the dashboard. The JSON
+report (also saved as `summary.json` in the run directory) gives every path.
+The synthetic data includes a deliberate BTC volume/price irregularity.
+
+Launch the dashboard and set its sidebar Gold and Anomaly Parquet paths to the
+`gold_path` and `anomaly_path` from that report:
+
+```sh
+.venv/bin/python -m streamlit run src/dashboard/app.py
+```
+
+Each demo uses a fresh topic and run directory; existing raw-topic messages,
+tables, checkpoints, and batch dashboard outputs are kept separately. Demo
+topics and files remain available for inspection. Use `--run-dir <new-path>` to
+choose a new output directory and `--bootstrap-servers <host:port>` for another
+reachable broker.
+
+To run the continuous worker on the original raw-trades topic:
+
+```sh
+.venv/bin/python -m marketguard.spark.kafka_to_delta
+```
+
+It reads `marketguard.trades.raw` at `localhost:9092`, reuses the explicit JSON
+schema, validates and deduplicates each batch, and inserts unmatched keys into
+`data/streaming/silver_delta` every ten seconds. Progress belongs to
+`data/checkpoints/kafka_to_delta`. It logs the batch ID and validated incoming
+row count only after a successful MERGE; that count includes replayed trades,
+not just newly inserted rows. Spark loads compatible Kafka and Delta packages.
+
+Use `--available-now` to process the current backlog and exit. Custom `--topic`,
+`--silver-path`, and `--checkpoint` options allow isolated experiments. Keep the
+table/checkpoint pair stable between restarts; `earliest` only applies to fresh
+queries. Spark owns Kafka source offsets through its checkpoint; this worker
+does not use the Python consumers to commit offsets.
+
+CI runs the following tests in a dedicated Spark process, using temporary
+tables and file streams carrying Kafka-shaped values; no broker is required:
+
+```sh
+.venv/bin/python -m pytest tests/test_kafka_to_delta.py -v
+```
+
+They cover duplicate replay, invalid/empty records, write-failure propagation,
+and the failure window where Delta has committed but Spark has not completed
+its checkpoint. Restarting that failed query replays the batch without adding
+trades. The local MVP assumes one writer per table and an existing correctly
+configured broker. Gold and anomaly outputs refresh in batches; live Coinbase
+production, ingestion-health monitoring, and cloud scheduling remain separate.
+
 ## Finite batch pipeline
 
 From the repository directory, install the package into the project environment:

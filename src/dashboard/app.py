@@ -1,8 +1,8 @@
+import os
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-
 from marketguard.dashboard.data_loader import (
     filter_by_product,
     load_anomaly_data,
@@ -48,9 +48,11 @@ def main() -> None:
     st.set_page_config(page_title="MarketGuard", layout="wide")
     st.title("MarketGuard")
     st.caption("Cryptocurrency Market Surveillance")
-    gold_path = st.sidebar.text_input("Gold Parquet path", value=str(DEFAULT_GOLD_PATH))
+    gold_path = st.sidebar.text_input(
+        "Gold Parquet path", value=os.getenv("MARKETGUARD_GOLD_PATH", str(DEFAULT_GOLD_PATH))
+    )
     anomaly_path = st.sidebar.text_input(
-        "Anomaly Parquet path", value=str(DEFAULT_ANOMALY_PATH)
+        "Anomaly Parquet path", value=os.getenv("MARKETGUARD_ANOMALY_PATH", str(DEFAULT_ANOMALY_PATH))
     )
 
     try:
