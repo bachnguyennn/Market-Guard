@@ -2,6 +2,16 @@
 
 Repository: https://github.com/bachnguyennn/Market-Guard
 
+Website demo: [Open the MarketGuard dashboard](https://market-guard-coinbase.streamlit.app/)
+
+## Project walkthrough video
+
+The narrated walkthrough covers both ingestion paths, replay safety, Gold and
+anomaly calculations, the dashboard, verified results, and operational limits.
+Its editable Remotion project, transcript, subtitles, and reproduction commands
+are in [`docs/video/README.md`](docs/video/README.md). The local MP4 export is
+`docs/video/out/marketguard-explained.mp4` and is intentionally ignored by Git.
+
 ## Publish analytics snapshots to Azure
 
 The publisher provides **local analytics → private Blob snapshots**. Publishing
@@ -277,9 +287,8 @@ setup scripts.
 After pushing the reviewed changes, sign into Community Cloud with GitHub,
 choose **Create app**, enter the settings above, and choose an available app
 subdomain. See the [deployment guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy).
-Once deployment succeeds, add the real `https://<chosen-name>.streamlit.app`
-URL to this README and your portfolio. No public URL is claimed before that
-account-level deployment is completed.
+The deployed dashboard is available at
+[market-guard-coinbase.streamlit.app](https://market-guard-coinbase.streamlit.app/).
 
 To regenerate only the safe bundled snapshot, use the full local environment:
 
@@ -656,6 +665,13 @@ Run the local integration test with:
 ```sh
 .venv/bin/python -m pytest tests/test_streaming_pipeline.py -v
 ```
+
+When running multiple Spark test modules together, `tests/conftest.py` loads
+the Delta JARs before the first Spark JVM starts. Keep this shared fixture in
+the repository: stopping a SparkSession leaves the JVM running, so adding
+Delta packages in a later test module cannot repair its classpath. If you see
+`Cannot find catalog plugin class ... DeltaCatalog` in a persistent test
+runner, restart that runner and rerun with the shared fixture enabled.
 
 ## Incremental Silver with MERGE
 

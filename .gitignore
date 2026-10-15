@@ -13,3 +13,4 @@ __pycache__/
 !/data/demo/anomalies.parquet
 !/data/demo/README.md
 *.egg-info/
+/docs/video/

@@ -131,9 +131,11 @@ def run_demo(args) -> dict:
             return process
 
         try:
-            worker = start_worker()
+            # Resolve JVM packages before the worker uses the same Ivy cache.
+            # Concurrent cold starts can overwrite each other's .part files.
             spark = create_spark_session("MarketGuard-DemoVerifier", "local[1]")
             spark.conf.set("spark.databricks.delta.snapshotPartitions", "1")
+            worker = start_worker()
             counts = []
             expected_offsets = publish_trades(producer, topic, trades)
             counts.append(wait_for_silver(spark, worker, silver_path, checkpoint, topic, expected_offsets, 100, args.timeout))
