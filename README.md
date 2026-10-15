@@ -71,6 +71,96 @@ are not automated. Never put SAS tokens in source control or logs.
 .venv/bin/python -m pytest tests/test_dashboard_publisher.py -v
 ```
 
+## Manually refresh analytics from Azure Bronze
+
+The **Refresh dashboard analytics** GitHub Actions workflow rebuilds
+`Azure Bronze → local Spark Silver → Gold → anomalies → dashboard snapshots`.
+It is manual-only: no schedule is enabled, the collector is not redeployed,
+and no new cloud compute resources are created. GitHub runner time and existing
+Azure storage/download/request charges can still apply.
+
+### One-time GitHub and Azure setup
+
+1. Commit and push `src/refresh_analytics.py`,
+   `.github/workflows/refresh-analytics.yml`, its tests, and this README to `main`.
+   The workflow deliberately runs only from `main`.
+2. In **GitHub repository → Settings → Secrets and variables → Actions**, reuse
+   the existing `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and
+   `AZURE_SUBSCRIPTION_ID` repository secrets from the collector deployment.
+   These identify the Azure identity; do not add an account key, client secret,
+   or dashboard SAS to this workflow.
+3. Confirm that identity's Azure federated credential trusts this repository's
+   `main` branch. The workflow uses `azure/login` with GitHub OIDC, then
+   `DefaultAzureCredential` uses the authenticated Azure CLI session. See
+   [GitHub's Azure OIDC setup](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-azure).
+4. In the Azure portal, open the existing storage account's containers. Under
+   each container's **Access control (IAM)**, grant that same identity:
+   - `bronze`: **Storage Blob Data Reader**.
+   - `dashboard`: **Storage Blob Data Contributor**.
+   Keep `dashboard` private. Management-plane Contributor alone is insufficient.
+   An administrator may need to assign these roles; allow time for propagation.
+
+### First dry run, then publish
+
+1. Open **GitHub → Actions → Refresh dashboard analytics → Run workflow**.
+2. Select `main`, keep the six-hour lookback, and leave **publish unchecked**.
+   This downloads recent Bronze, runs the existing verified batch pipeline,
+   exports validated Parquet locally, and checks the current dashboard snapshot.
+   It performs no Azure writes.
+3. After the job succeeds, download its `analytics-refresh-summary` artifact.
+   Check `silver_count`, `gold_rows`, `alert_count`, `latest_market_minute`,
+   and `published: false`. Only the count/time summary is uploaded as an
+   artifact, not raw trades, credentials, or local Parquet datasets.
+4. Run it again with **publish checked**. A successful report must say
+   `published: true`. The publisher verifies uploaded bytes, commits the hash
+   manifest last, then the refresh verifies dashboard read-back counts.
+5. Open the public website and click **Refresh Azure data**. Confirm the source
+   is Azure and the displayed latest market minute matches the report.
+
+For a local run, use the full pipeline environment, Java 17, and your Azure login:
+
+```sh
+az login
+.venv/bin/python -m marketguard.refresh_analytics
+.venv/bin/python -m marketguard.refresh_analytics --publish
+.venv/bin/python -m pytest tests/test_refresh_analytics.py -v
+```
+
+Local staging is under ignored `data/analytics_refresh/run_*`; the successful
+summary is `data/analytics-refresh-summary.json`. Each run uses a separate
+directory. Old local runs can be removed after inspection; never delete Azure
+Bronze as part of this cleanup. The workflow pins its tested Spark/Delta and
+dashboard dependencies and retains summary artifacts for seven days.
+
+### Bounds and limitations
+
+- The default window is the last **six hours of blob ingestion timestamps**,
+  not a full-history or event-time incremental rebuild. `--lookback-hours`
+  accepts 1–24 locally; the workflow offers 6, 12, or 24. Totals can decrease
+  as old batches leave this rolling window.
+- Bronze filenames are UUID-based, not date-partitioned. Azure must still list
+  the `coinbase/` prefix to filter metadata; downloads alone are windowed.
+  See [Azure's listing API](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blobs-list-python).
+- Each run allows at most 50,000 scanned blobs, 10,000 selected JSONL batches,
+  and 128 MiB of source data, with eight download workers. Exceeding a bound
+  fails before publication rather than silently dropping batches. Eventually
+  date-partitioned Bronze or a persisted cursor will be needed.
+- Listed ETags and byte counts are checked during downloads. Empty input,
+  failed downloads, invalid analytics, and market timestamps older than the
+  published snapshot prevent publication. Upload failures propagate; two
+  snapshot replacements are still not an atomic transaction and can temporarily
+  make the dashboard reject the pair until a successful retry.
+- GitHub serializes this workflow's refreshes. Do not run another publisher
+  concurrently. The 25-minute job timeout bounds runner work; a timeout during
+  publishing may require a new successful run to restore a matched snapshot.
+- Rolling detectors still require sufficient consecutive historical minutes.
+  Window-edge/partial-minute collection is not an ingestion-health guarantee,
+  and a statistical alert is not proof of fraud.
+
+Scheduling is intentionally deferred until a manual dry run and publication
+both succeed in GitHub. Dashboard SAS renewal is **still manual**: refreshing
+analytics does not extend the read-only token in Streamlit Secrets.
+
 ## Connect the public dashboard to Azure
 
 Push the updated reader, publisher, dashboard requirements, and entry points to

@@ -1,0 +1,68 @@
+name: Refresh dashboard analytics
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish verified snapshots to Azure (leave off for a dry run)
+        type: boolean
+        default: false
+      lookback_hours:
+        description: Recent Bronze ingestion window in hours
+        type: choice
+        options: ["6", "12", "24"]
+        default: "6"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: marketguard-analytics-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install analytics dependencies
+        run: |
+          python -m pip install -e . pytest \
+            'pyspark==4.2.0' 'delta-spark==4.4.1' \
+            'azure-identity==1.26.0' -r deploy/requirements.txt
+      - name: Test refresh safeguards
+        run: python -m pytest tests/test_refresh_analytics.py -q
+      - name: Log in to Azure using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Rebuild and verify recent analytics
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          LOOKBACK_HOURS: ${{ inputs.lookback_hours }}
+          SPARK_LOCAL_IP: 127.0.0.1
+        shell: bash
+        run: |
+          flags=()
+          if [[ "$PUBLISH" == "true" ]]; then flags+=(--publish); fi
+          python -m marketguard.refresh_analytics \
+            --lookback-hours "$LOOKBACK_HOURS" "${flags[@]}"
+      - name: Attach credential-free refresh report
+        uses: actions/upload-artifact@v4
+        with:
+          name: analytics-refresh-summary
+          path: data/analytics-refresh-summary.json
+          if-no-files-found: error
+          retention-days: 7
