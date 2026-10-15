@@ -27,16 +27,23 @@ sleep. It then checks these scenarios:
 
 | Scenario | Expected Silver rows |
 | --- | ---: |
-| Publish ten unique trades | 10 |
-| Publish those same ten again; wait for their offsets to complete | 10 |
-| Restart the worker with the same checkpoint | 10 |
-| Complete 15 consecutive minutes for each trading pair | 30 |
+| Publish 100 unique trades | 100 |
+| Replay all 100; wait for their offsets to complete | 100 |
+| Restart with the same checkpoint and replay all 100 again | 100 |
 
-The deterministic data has nonzero historical variance, a BTC volume spike at
-12:12 UTC, and an ETH price jump at 12:13 UTC. The script verifies both signals,
-refreshes Gold/anomaly Parquet, and starts Streamlit only after the files are
-readable. `summary.json`, `worker.log`, `dashboard.log`, the Delta table, and the
-Parquet outputs are saved in `data/streaming/final_demo_<id>/`.
+The deterministic dataset has 50 trades per pair across 15 consecutive minutes
+(three or four trades per bucket), nonzero historical variance, a BTC volume
+spike at 12:12 UTC, and an ETH price jump at 12:13 UTC. It produces 30 Gold
+buckets with 100 total trades. The verifier checks every persisted trade and
+every bucket's count, base volume, notional volume, and VWAP against an
+independent `Decimal` reference, using an absolute `Decimal("0.000001")`
+tolerance for Spark's decimal result scale. It also checks anomaly bucket
+uniqueness, flag/type consistency, and no alerts during the initial warm-up.
+
+The script verifies both intended signals, refreshes Gold/anomaly Parquet, and
+starts Streamlit only after the files are readable. `summary.json`, `worker.log`,
+`dashboard.log`, the Delta table, and the Parquet outputs are saved in
+`data/streaming/final_demo_<id>/`.
 
 Use Ctrl+C to stop the demo's Spark worker and Streamlit child processes. The
 Kafka container and demo artifacts stay available for inspection. Each new run
@@ -53,6 +60,30 @@ and dashboard health checks have their own bounded deadlines. `--run-dir` must
 name a new directory. `MARKETGUARD_PYTHON` can select another installed Python
 environment. On failure, inspect the run's logs rather than deleting only a
 checkpoint or table.
+
+### Separate publishing and verification commands
+
+The three scripts have separate responsibilities: `demo.sh` starts and
+orchestrates the local components, `generate_demo_trades.py` publishes the
+deterministic events, and `verify_demo.py` checks an existing run without
+publishing or modifying its outputs. The orchestrator reuses the same publisher
+and verifier implementation as the standalone scripts.
+
+After a run, copy its topic and directory from `summary.json`:
+
+```sh
+.venv/bin/python scripts/generate_demo_trades.py \
+  --topic 'marketguard.demo.<id>' --receipt /tmp/marketguard-delivery.json
+.venv/bin/python scripts/verify_demo.py \
+  --run-dir 'data/streaming/final_demo_<id>'
+```
+
+Publishing again deliberately replays the same 100 keys. Keep the worker
+running and let its checkpoint advance before rechecking. The publisher waits
+for delivery callbacks and a bounded `flush()`, fails on delivery errors, and
+returns acknowledged next offsets for every affected partition. The verifier
+uses the run's recorded paths; it does not assume the default batch output
+directory. Neither standalone command starts Kafka or a streaming worker.
 
 ### Architecture and deployment scope
 
@@ -76,7 +107,7 @@ WebSocket producer to Kafka, while retaining Blob Storage as the Bronze archive.
 
 ### Screenshots
 
-Actual local demo outputs, with 15 minutes per pair:
+Actual local demo outputs, with 100 trades and 15 minutes per pair:
 
 ![Market overview with a BTC volume spike](docs/screenshots/market-overview.png)
 
@@ -96,16 +127,30 @@ command to use an existing Chrome installation.
 ### Automated verification
 
 ```sh
-.venv/bin/python -m pytest tests/test_local_demo.py tests/test_dashboard.py tests/test_dashboard_data.py
+.venv/bin/python -m pytest tests/test_local_demo.py tests/test_demo_verifier.py tests/test_dashboard.py tests/test_dashboard_data.py
 MARKETGUARD_KAFKA_E2E=1 .venv/bin/python -m pytest tests/test_demo_e2e.py -v
 .venv/bin/python -m pytest tests/test_kafka_to_delta.py -v
 ```
 
 The opt-in end-to-end test invokes `scripts/demo.sh --verify-only` against real
 Docker/Kafka and Spark/Delta, verifies replay counts and both anomaly scenarios,
-then renders Streamlit with the generated files. GitHub Actions has a separate
+then renders Streamlit with the generated files and checks BTC filtering.
+The focused suite covers deterministic history, bounded readiness, partition
+delivery receipts, corrupted aggregates, decimal tolerance, and dashboard
+loading/filtering. GitHub Actions has a separate
 `local-demo` job that runs this test. The smaller worker suite also verifies a
 failure after Delta commit but before Spark checkpoint completion.
+
+Local acceptance results (2026-10-14): **100 → 100 → 100 Silver trades**,
+**30 Gold buckets**, and **two alerts** displayed in Streamlit. All aggregate
+comparisons passed using Decimal arithmetic. The real end-to-end test also
+verified product filtering: selecting BTC shows 50 trades and the BTC alert.
+Validation passed: 40 focused tests, five worker/recovery tests, and one real
+Kafka-to-dashboard integration test. These are local results; the workflow is
+configured in GitHub Actions but its remote run status is not asserted here.
+The tested environment used Python 3.12.12, PySpark 4.2.0, Delta Spark 4.4.1,
+and Kafka 4.3.1; the Spark Kafka connector is matched to the installed PySpark
+version automatically.
 
 ### Trade-offs and limitations
 

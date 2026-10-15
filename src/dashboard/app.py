@@ -75,6 +75,7 @@ def main() -> None:
         st.metric("Total trades", f"{int(filtered_df['trade_count'].sum()):,}")
         st.subheader("Notional volume by minute")
         chart_df = filtered_df[["minute_start", "product_id", "notional_volume"]].copy()
+        chart_df["minute_start"] = chart_df["minute_start"].dt.strftime("%Y-%m-%d %H:%M")
         chart_df["notional_volume"] = pd.to_numeric(chart_df["notional_volume"])
         st.bar_chart(
             chart_df,

@@ -9,6 +9,7 @@ from confluent_kafka import Producer
 from confluent_kafka.admin import AdminClient, NewTopic
 
 from .anomoly_pipeline import build_anomaly_table
+from .demo_publisher import publish_trades
 from .run_pipeline import write_and_verify
 from .spark.bronze_to_silver import calculate_market_metrics
 from .spark.kafka_to_delta import create_spark_session, read_kafka_stream, start_stream
@@ -35,31 +36,6 @@ def synthetic_trades() -> list[dict]:
             }
         )
     return trades
-
-
-def publish_trades(producer: Producer, topic: str, trades: list[dict]) -> dict[int, int]:
-    failures = []
-    offsets = {}
-
-    def delivery_report(error, message):
-        if error is not None:
-            failures.append(str(error))
-        else:
-            partition = message.partition()
-            offsets[partition] = max(offsets.get(partition, 0), message.offset() + 1)
-
-    for trade in trades:
-        producer.produce(
-            topic=topic,
-            key=trade["product_id"],
-            value=json.dumps(trade),
-            on_delivery=delivery_report,
-        )
-        producer.poll(0)
-    remaining = producer.flush(30)
-    if remaining or failures:
-        raise RuntimeError(f"Kafka delivery failed: pending={remaining}, errors={failures}")
-    return offsets
 
 
 def main() -> None:

@@ -20,9 +20,13 @@ def main() -> None:
             expect(page.get_by_role("heading", name="MarketGuard", exact=True)).to_be_visible(timeout=30000)
             page.get_by_role("tab", name="Market Overview", exact=True).click()
             expect(page.get_by_text("Total trades", exact=True)).to_be_visible()
+            expect(page.locator('[data-testid="stDataFrame"]:visible canvas').first).to_be_visible(timeout=30000)
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
             page.screenshot(path=str(output_dir / "market-overview.png"), full_page=True)
             page.get_by_role("tab", name="Anomaly Alerts", exact=True).click()
             expect(page.get_by_text("Total alerts", exact=True)).to_be_visible()
+            expect(page.locator('[data-testid="stDataFrame"]:visible canvas').first).to_be_visible(timeout=30000)
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
             page.screenshot(path=str(output_dir / "anomaly-alerts.png"), full_page=True)
         finally:
             browser.close()

@@ -14,11 +14,11 @@ from uuid import uuid4
 
 from confluent_kafka import KafkaException, Producer
 from confluent_kafka.admin import AdminClient, NewTopic
-from pyspark.sql import functions as F
 
 from .anomoly_pipeline import build_anomaly_table
 from .demo_data import synthetic_market_history
-from .demo_kafka_to_delta import publish_trades
+from .demo_publisher import publish_trades
+from .demo_verifier import verify_demo_outputs
 from .run_pipeline import write_and_verify
 from .spark.bronze_to_silver import calculate_market_metrics
 from .spark.kafka_to_delta import create_spark_session
@@ -135,47 +135,30 @@ def run_demo(args) -> dict:
             spark = create_spark_session("MarketGuard-DemoVerifier", "local[1]")
             spark.conf.set("spark.databricks.delta.snapshotPartitions", "1")
             counts = []
-            expected_offsets = publish_trades(producer, topic, trades[:10])
-            counts.append(wait_for_silver(spark, worker, silver_path, checkpoint, topic, expected_offsets, 10, args.timeout))
-            print("Scenario A: 10 unique trades persisted", flush=True)
-            expected_offsets.update(publish_trades(producer, topic, trades[:10]))
-            counts.append(wait_for_silver(spark, worker, silver_path, checkpoint, topic, expected_offsets, 10, args.timeout))
-            print("Scenario B: replay completed; Silver still has 10 unique trades", flush=True)
+            expected_offsets = publish_trades(producer, topic, trades)
+            counts.append(wait_for_silver(spark, worker, silver_path, checkpoint, topic, expected_offsets, 100, args.timeout))
+            print("Scenario A: 100 unique trades persisted", flush=True)
+            expected_offsets.update(publish_trades(producer, topic, trades))
+            counts.append(wait_for_silver(spark, worker, silver_path, checkpoint, topic, expected_offsets, 100, args.timeout))
+            print("Scenario B: replay completed; Silver still has 100 unique trades", flush=True)
             stop_process(worker)
             worker = start_worker()
-            counts.append(wait_for_silver(spark, worker, silver_path, checkpoint, topic, expected_offsets, 10, args.timeout))
-            expected_offsets.update(publish_trades(producer, topic, trades[10:]))
-            counts.append(wait_for_silver(spark, worker, silver_path, checkpoint, topic, expected_offsets, 30, args.timeout))
+            expected_offsets.update(publish_trades(producer, topic, trades))
+            counts.append(wait_for_silver(spark, worker, silver_path, checkpoint, topic, expected_offsets, 100, args.timeout))
+            print("Restart verified: replay processed with the same checkpoint; Silver remains at 100", flush=True)
 
             silver_df = spark.read.format("delta").load(str(silver_path))
-            unique_count = silver_df.select("product_id", "trade_id").distinct().count()
-            if unique_count != 30:
-                raise RuntimeError("Silver keys are not unique")
             gold_path = run_dir / "dashboard" / "gold"
             anomaly_path = run_dir / "dashboard" / "anomalies"
-            gold_df, gold_count = write_and_verify(calculate_market_metrics(silver_df), gold_path)
-            anomalies_df, anomaly_count = write_and_verify(build_anomaly_table(gold_df), anomaly_path)
-            btc_spike = anomalies_df.filter(
-                (F.col("product_id") == "BTC-USD")
-                & (F.col("minute_start") == F.to_timestamp(F.lit("2026-10-14T12:12:00Z")))
-                & F.col("is_volume_spike")
-            ).count()
-            eth_jump = anomalies_df.filter(
-                (F.col("product_id") == "ETH-USD")
-                & (F.col("minute_start") == F.to_timestamp(F.lit("2026-10-14T12:13:00Z")))
-                & F.col("is_statistical_price_jump")
-            ).count()
-            if gold_count != 30 or anomaly_count != 30 or not btc_spike or not eth_jump:
-                raise RuntimeError("The complete-history anomaly demonstration failed")
+            gold_df, _ = write_and_verify(calculate_market_metrics(silver_df), gold_path)
+            write_and_verify(build_anomaly_table(gold_df), anomaly_path)
+            verification = verify_demo_outputs(spark, str(silver_path), str(gold_path), str(anomaly_path))
             summary = {
                 "topic": topic, "partition_count": 2, "silver_counts": counts,
-                "unique_silver_count": unique_count, "minutes_per_product": 15,
+                "minutes_per_product": 15,
                 "silver_path": str(silver_path), "checkpoint_path": str(checkpoint),
                 "gold_path": str(gold_path), "anomaly_path": str(anomaly_path),
-                "gold_count": gold_count, "anomaly_count": anomaly_count,
-                "alert_count": anomalies_df.filter("is_anomaly").count(),
-                "btc_volume_spike_verified": bool(btc_spike),
-                "eth_price_jump_verified": bool(eth_jump), "worker_pids": worker_pids,
+                "worker_pids": worker_pids, **verification,
             }
             summary_path = run_dir / "summary.json"
             summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
