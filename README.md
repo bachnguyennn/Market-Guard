@@ -2,6 +2,211 @@
 
 Repository: https://github.com/bachnguyennn/Market-Guard
 
+## Publish analytics snapshots to Azure
+
+The publisher provides **local analytics → private Blob snapshots**. Publishing
+alone does not switch the website's data source; configure the read-only Azure
+connection below. It does not start collection, create compute resources, or
+enable scheduled refreshes. The existing immutable
+Bronze upload path remains unchanged.
+
+From the project directory, with the full pipeline environment installed:
+
+```sh
+.venv/bin/python scripts/publish_dashboard.py --export-only
+az login
+.venv/bin/python scripts/publish_dashboard.py
+```
+
+The publisher reads `data/batch_output/gold` and `data/batch_output/anomalies`,
+validates schemas and matching unique product/minute keys, and creates
+`data/dashboard_export/gold.parquet` and `anomalies.parquet`. Only known analytics
+columns are exported. Decimal values and UTC timestamps are preserved. Use
+`--input-dir <analytics-output-dir>` and `--export-dir <separate-export-dir>`
+for other saved outputs; input and export directories must not overlap.
+
+Unless `--export-only` is supplied, it authenticates using `DefaultAzureCredential`
+and publishes to `https://stmarketguard3b4d59fa.blob.core.windows.net`:
+
+- Private container: `dashboard` (created if absent; existing public containers are rejected).
+- Replaceable blobs: `latest/gold.parquet` and `latest/anomalies.parquet`.
+- Each upload uses overwrite and is downloaded again for byte-for-byte verification.
+- `latest/snapshot.json` is uploaded last, with byte counts and SHA-256 hashes of both files.
+- Failures exit unsuccessfully; only a fully verified pair produces `published: true`.
+
+Your signed-in identity needs storage data-plane access, typically
+**Storage Blob Data Contributor** at the appropriate scope. Account Owner or
+Contributor alone does not necessarily grant blob data access. See Microsoft's
+[passwordless setup](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-quickstart-blobs-python)
+and [blob upload documentation](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blob-upload-python).
+No storage account key or SAS is embedded in this publisher. Standard storage
+and request usage applies to the existing Azure account.
+
+The two blob overwrites are **not atomic as a pair**. The dashboard checks both
+files against the manifest before displaying either. In-progress, partial, or
+concurrent overwrites fail closed instead of combining different snapshots.
+This can temporarily show an error while publishing; immutable versioned blob
+paths would improve availability later. A single publisher is still recommended.
+
+Inspect the published objects without printing credentials:
+
+```sh
+az storage blob list \
+  --account-name stmarketguard3b4d59fa --container-name dashboard \
+  --auth-mode login \
+  --query "[].{Name:name,Modified:properties.lastModified}" --output table
+```
+
+The publisher reports the **latest market minute in the source data**, not a
+claim that collection is running. Zero alerts is a valid result; the existing
+small batch output may not contain enough history for statistical alerts.
+The first verified Azure publication contained two Gold rows, two evaluated
+anomaly rows, and zero flagged alerts, with latest market minute
+`2026-10-14 21:35 UTC`. Both uploaded blobs were downloaded and matched the
+local exports byte-for-byte; the destination container was checked as private.
+Exports remain ignored by Git. SAS rotation and scheduled analytics refreshes
+are not automated. Never put SAS tokens in source control or logs.
+
+```sh
+.venv/bin/python -m pytest tests/test_dashboard_publisher.py -v
+```
+
+## Connect the public dashboard to Azure
+
+Push the updated reader, publisher, dashboard requirements, and entry points to
+GitHub. Keep the Community Cloud main file at `deploy/streamlit_app.py` and
+Python at `3.12`. The dashboard environment adds only `azure-storage-blob`;
+it does not require Azure Identity, Spark, Delta, or Kafka.
+The canonical pinned dependency list is `deploy/requirements.txt`, next to the
+Cloud entry point; `requirements-dashboard.txt` includes it for local installs.
+Make sure the Cloud deployment rebuilds its environment after these changes.
+
+1. Run the publisher again so `latest/snapshot.json` exists beside both Parquet
+   files. Old publications without a manifest are deliberately rejected.
+2. Generate a short-lived, HTTPS-only **read-only container SAS** locally using
+   your Azure login. Run the following yourself; its output is a secret, not
+   something to paste into chat, a GitHub issue, or a commit:
+
+```sh
+EXPIRY=$(.venv-dashboard/bin/python -c 'from datetime import UTC, datetime, timedelta; print((datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%MZ"))')
+az storage container generate-sas \
+  --account-name stmarketguard3b4d59fa --name dashboard \
+  --permissions r --https-only --expiry "$EXPIRY" \
+  --auth-mode login --as-user --output tsv
+```
+
+The reader knows the three blob paths, so list permission is unnecessary;
+`rl` also works, but write/delete permissions and account keys are rejected.
+Creating a user-delegation SAS requires permission to generate a delegation
+key at the storage-account scope. If denied, ask an administrator for narrowly
+scoped access rather than using an account key. See Microsoft's
+[user-delegation SAS guidance](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blob-user-delegation-sas-create-cli).
+
+3. In Community Cloud app settings, add the following through **Secrets**,
+   replacing only the placeholder with the token. A safe template is also in
+   `deploy/azure-secrets.example.toml`.
+
+```toml
+[azure]
+account_url = "https://stmarketguard3b4d59fa.blob.core.windows.net"
+container = "dashboard"
+sas_token = "YOUR_READ_ONLY_CONTAINER_SAS"
+```
+
+See [Streamlit secrets management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
+For local testing, put the actual values in ignored `.streamlit/secrets.toml`.
+Do not edit the versioned template with a real token. No token is generated or
+stored by this repository's setup scripts.
+
+4. Reload the website. An `[azure]` section selects Azure automatically. With
+   no section, the clearly labeled bundled synthetic demo remains available.
+   A partial/expired/invalid Azure configuration or failed download shows a
+   clear error and does **not** silently fall back to demo data.
+
+The reader validates both Parquet schemas, unique matching minute/product keys,
+and manifest hashes, preserving Decimal values and UTC timestamps. Both tables
+share one 60-second in-memory cache entry. Token rotation changes the cache key;
+expired tokens are checked even before cache hits. **Refresh Azure data** clears
+the cache and reruns the page. The cache TTL alone does not trigger page reruns,
+run the analytics pipeline, or publish new observations.
+
+The website reports the latest **market minute from Gold**, snapshot publication
+time, download time, and source-data age separately. Data over 30 minutes old
+gets a warning; that threshold is a display safeguard, not an ingestion SLA.
+It never labels stored data as a continuous live feed or claims the collector
+is running. SAS tokens expire after the requested day: rotate the secret before
+expiry. Durable renewable authentication and scheduled refreshes remain future
+work; no collector, scheduling, or production infrastructure is changed here.
+
+```sh
+.venv/bin/python -m pytest tests/test_azure_dashboard.py tests/test_dashboard_publisher.py tests/test_public_dashboard.py tests/test_public_deployment.py tests/test_dashboard.py tests/test_dashboard_data.py -v
+```
+
+## Public dashboard deployment
+
+Without Azure secrets, the public website uses a bundled **synthetic, precomputed
+snapshot**, not a live Coinbase feed. It shows 100 trades across 15 minutes per pair,
+30 Gold buckets, a BTC volume alert, and an ETH price alert. Kafka, Spark,
+Delta, and Azure run separately and are not needed on the dashboard server.
+No Azure credentials are required for that demo mode. Visitors cannot
+enter server filesystem paths; the original local dashboard still supports
+its existing path controls and environment settings.
+
+To test the public entry point in a lightweight environment:
+
+```sh
+python -m venv .venv-dashboard
+.venv-dashboard/bin/python -m pip install -r requirements-dashboard.txt
+.venv-dashboard/bin/python -m streamlit run streamlit_app.py
+```
+
+Deploy through [Streamlit Community Cloud](https://share.streamlit.io/) using:
+
+| Setting | Value |
+| --- | --- |
+| Repository | `bachnguyennn/Market-Guard` |
+| Branch | Your branch containing these deployment files |
+| Main file path | `deploy/streamlit_app.py` |
+| Python | `3.12` |
+| Secrets | None for synthetic demo; `[azure]` section for Azure snapshots |
+
+**Use the `deploy/` entry point in Community Cloud**, not the root wrapper.
+Its adjacent `deploy/requirements.txt` selects the pinned dashboard-only
+requirements. The existing root `requirements.txt` and pipeline installation
+remain unchanged. Streamlit documents
+[entry-point dependency precedence](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies)
+and [subdirectory entry points](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/file-organization).
+
+Before uploading, review `git status` and the diff. Include `streamlit_app.py`,
+`deploy/`, `requirements-dashboard.txt`, `src/dashboard/`, the tracked
+`src/__init__.py`, and the small allowlisted `data/demo/` outputs, plus the
+associated tests/documentation. All other generated data, `.env` files, and
+`.streamlit/secrets.toml` remain ignored. No commit or push is performed by the
+setup scripts.
+
+After pushing the reviewed changes, sign into Community Cloud with GitHub,
+choose **Create app**, enter the settings above, and choose an available app
+subdomain. See the [deployment guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy).
+Once deployment succeeds, add the real `https://<chosen-name>.streamlit.app`
+URL to this README and your portfolio. No public URL is claimed before that
+account-level deployment is completed.
+
+To regenerate only the safe bundled snapshot, use the full local environment:
+
+```sh
+.venv/bin/python scripts/build_dashboard_demo.py
+.venv/bin/python -m pytest tests/test_public_dashboard.py tests/test_public_deployment.py tests/test_dashboard.py tests/test_dashboard_data.py -v
+.venv-dashboard/bin/python -m pip install pytest
+.venv-dashboard/bin/python -m pytest tests/test_public_deployment.py -v
+```
+
+This uses the existing synthetic generator and Spark transformations, validates
+the Decimal aggregates and both expected alerts, and exports only Gold/anomaly
+Parquet. It never reads your real Bronze archive or contacts cloud services.
+The `public-dashboard` CI job also checks startup and BTC/ETH filtering in demo
+mode using only dashboard dependencies. It rejects pipeline imports and verifies
+that the unconfigured demo does not import Azure libraries or need credentials.
+
 ## Run the finished local demo
 
 Prerequisites: Python 3.11+, a Java 17+ runtime, Docker, and free local ports

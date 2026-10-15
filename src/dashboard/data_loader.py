@@ -16,12 +16,16 @@ ALERT_EXPLANATIONS = {
 }
 
 
-def _load_parquet(path: str, required_columns: set[str], label: str) -> pd.DataFrame:
+def _read_parquet(path: str, label: str) -> pd.DataFrame:
     parquet_path = Path(path)
     if not parquet_path.exists():
         raise FileNotFoundError(f"{label} Parquet dataset not found: {parquet_path}")
 
-    data = pd.read_parquet(parquet_path, engine="pyarrow")
+    return pd.read_parquet(parquet_path, engine="pyarrow")
+
+
+def _validate_frame(data: pd.DataFrame, required_columns: set[str], label: str) -> pd.DataFrame:
+    data = data.copy()
     missing_columns = required_columns - set(data.columns)
     if missing_columns:
         raise ValueError(
@@ -38,7 +42,12 @@ def _load_parquet(path: str, required_columns: set[str], label: str) -> pd.DataF
 
 def load_gold_data(path: str) -> pd.DataFrame:
     """Read validated Gold Parquet without converting financial Decimal values."""
-    return _load_parquet(path, GOLD_COLUMNS, "Gold")
+    return validate_gold_data(_read_parquet(path, "Gold"))
+
+
+def validate_gold_data(data: pd.DataFrame) -> pd.DataFrame:
+    """Validate a local or downloaded Gold frame with identical Decimal/UTC rules."""
+    return _validate_frame(data, GOLD_COLUMNS, "Gold")
 
 
 def _boolean_flag(data: pd.DataFrame, column: str) -> pd.Series:
@@ -50,7 +59,12 @@ def _boolean_flag(data: pd.DataFrame, column: str) -> pd.Series:
 
 def load_anomaly_data(path: str) -> pd.DataFrame:
     """Load anomaly Parquet with UTC timestamps and a combined Boolean flag."""
-    data = _load_parquet(path, {"product_id", "minute_start"}, "Anomaly")
+    return validate_anomaly_data(_read_parquet(path, "Anomaly"))
+
+
+def validate_anomaly_data(data: pd.DataFrame) -> pd.DataFrame:
+    """Validate downloaded or local anomaly results without changing alert semantics."""
+    data = _validate_frame(data, {"product_id", "minute_start"}, "Anomaly")
     signal_columns = {"is_volume_spike", "is_statistical_price_jump"}
     for column in signal_columns.intersection(data.columns):
         data[column] = _boolean_flag(data, column)
