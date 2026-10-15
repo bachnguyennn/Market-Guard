@@ -12,14 +12,15 @@ from marketguard.dashboard.data_loader import (
 
 DEFAULT_GOLD_PATH = Path("data/batch_output/gold")
 DEFAULT_ANOMALY_PATH = Path("data/batch_output/anomalies")
+DEMO_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "demo"
 
 
-def display_alerts(path: str, selected_product: str) -> None:
+def display_alerts(path: str, selected_product: str, public_demo: bool = False) -> None:
     st.caption("Alerts identify statistical irregularities for further investigation.")
     try:
         anomaly_df = load_anomaly_data(path)
     except (OSError, ValueError) as error:
-        st.error(f"Unable to load anomaly data: {error}")
+        st.error("The bundled demo alerts are unavailable." if public_demo else f"Unable to load anomaly data: {error}")
         return
 
     alerts_df = select_alerts(anomaly_df, selected_product)
@@ -44,22 +45,34 @@ def display_alerts(path: str, selected_product: str) -> None:
     )
 
 
-def main() -> None:
+def main(public_demo: bool = False) -> None:
     st.set_page_config(page_title="MarketGuard", layout="wide")
     st.title("MarketGuard")
     st.caption("Cryptocurrency Market Surveillance")
-    gold_path = st.sidebar.text_input(
-        "Gold Parquet path", value=os.getenv("MARKETGUARD_GOLD_PATH", str(DEFAULT_GOLD_PATH))
-    )
-    anomaly_path = st.sidebar.text_input(
-        "Anomaly Parquet path", value=os.getenv("MARKETGUARD_ANOMALY_PATH", str(DEFAULT_ANOMALY_PATH))
-    )
+    if public_demo:
+        st.info(
+            "Synthetic demo snapshot — not a live market feed. "
+            "BTC/ETH trades include an intentional volume spike and price jump. "
+            "The ingestion and Spark pipelines run separately from this website."
+        )
+        gold_path = str(DEMO_DATA_PATH / "gold.parquet")
+        anomaly_path = str(DEMO_DATA_PATH / "anomalies.parquet")
+    else:
+        gold_path = st.sidebar.text_input(
+            "Gold Parquet path", value=os.getenv("MARKETGUARD_GOLD_PATH", str(DEFAULT_GOLD_PATH))
+        )
+        anomaly_path = st.sidebar.text_input(
+            "Anomaly Parquet path", value=os.getenv("MARKETGUARD_ANOMALY_PATH", str(DEFAULT_ANOMALY_PATH))
+        )
 
     try:
         gold_df = load_gold_data(gold_path)
     except (OSError, ValueError) as error:
-        st.error(f"Unable to load Gold data: {error}")
-        st.info("Generate local outputs with: python -m marketguard.run_pipeline")
+        if public_demo:
+            st.error("The bundled demo market data is unavailable.")
+        else:
+            st.error(f"Unable to load Gold data: {error}")
+            st.info("Generate local outputs with: python -m marketguard.run_pipeline")
         st.stop()
 
     if gold_df.empty:
@@ -94,7 +107,7 @@ def main() -> None:
         )
 
     with alerts_tab:
-        display_alerts(anomaly_path, selected_product)
+        display_alerts(anomaly_path, selected_product, public_demo=public_demo)
 
 
 if __name__ == "__main__":
