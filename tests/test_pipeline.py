@@ -54,3 +54,29 @@ def test_process_batch_keeps_file_when_upload_fails(monkeypatch, tmp_path):
     pending_files = list((tmp_path / "data" / "pending").glob("*.jsonl"))
     assert len(pending_files) == 1
     assert len(pending_files[0].read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_batches_are_named_by_utc_upload_hour(monkeypatch, tmp_path):
+    from datetime import UTC, datetime
+
+    from src.storage import bronze_hour_prefix
+
+    names = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(pipeline, "upload_with_retry", lambda path, name: names.append(name))
+    before = datetime.now(UTC)
+    asyncio.run(pipeline.process_batch([{"trade_id": 1}]))
+    after = datetime.now(UTC)
+    assert names[0].startswith((bronze_hour_prefix(before), bronze_hour_prefix(after)))
+    assert names[0].endswith(".jsonl") and "/batch_" in names[0]
+
+
+def test_hour_prefix_requires_timezone_and_uses_utc():
+    from datetime import datetime, timedelta, timezone
+
+    from src.storage import bronze_hour_prefix
+
+    toronto = timezone(timedelta(hours=-5))
+    assert bronze_hour_prefix(datetime(2026, 11, 4, 20, 30, tzinfo=toronto)) == "coinbase/2026/11/05/01/"
+    with pytest.raises(ValueError):
+        bronze_hour_prefix(datetime(2026, 11, 4, 20))

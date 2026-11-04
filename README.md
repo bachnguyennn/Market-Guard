@@ -150,13 +150,19 @@ dashboard dependencies and retains summary artifacts for seven days.
   not a full-history or event-time incremental rebuild. `--lookback-hours`
   accepts 1–24 locally; the workflow offers 6, 12, or 24. Totals can decrease
   as old batches leave this rolling window.
-- Bronze filenames are UUID-based, not date-partitioned. Azure must still list
-  the `coinbase/` prefix to filter metadata; downloads alone are windowed.
+- Bronze is **hour-partitioned by UTC upload time**:
+  `coinbase/YYYY/MM/DD/HH/batch_<uuid>.jsonl`. The refresh lists only the hour
+  folders in its window (plus one hour of slack for uploads that cross an hour
+  boundary), so listing cost stays flat as history grows.
   See [Azure's listing API](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blobs-list-python).
+- Batches written before partitioning (flat `coinbase/batch_<uuid>.jsonl`) are
+  never listed by the refresh. Right after the collector is redeployed, the
+  window only contains data collected since the redeploy.
 - Each run allows at most 50,000 scanned blobs, 10,000 selected JSONL batches,
   and 128 MiB of source data, with eight download workers. Exceeding a bound
-  fails before publication rather than silently dropping batches. Eventually
-  date-partitioned Bronze or a persisted cursor will be needed.
+  fails before publication rather than silently dropping batches. At the
+  observed ~10,000 batches/day, a 24-hour lookback is close to the batch limit;
+  prefer 6 or 12 hours.
 - Listed ETags and byte counts are checked during downloads. Empty input,
   failed downloads, invalid analytics, and market timestamps older than the
   published snapshot prevent publication. Upload failures propagate; two

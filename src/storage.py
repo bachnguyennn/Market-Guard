@@ -1,6 +1,20 @@
 import json
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+
+BRONZE_PREFIX = "coinbase/"
+
+
+def bronze_hour_prefix(moment: datetime) -> str:
+    """Hour-partitioned Bronze folder, e.g. coinbase/2026/11/04/22/ (UTC).
+
+    Partitioning lets readers list only the hours they need instead of
+    every batch ever collected.
+    """
+    if moment.tzinfo is None:
+        raise ValueError("Bronze partition times must be timezone-aware")
+    return f"{BRONZE_PREFIX}{moment.astimezone(UTC):%Y/%m/%d/%H}/"
 
 
 def create_batch_file(

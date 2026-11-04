@@ -19,6 +19,7 @@ from .dashboard_publisher import (
     export_dashboard,
     publish_exports,
 )
+from .storage import bronze_hour_prefix
 
 
 def select_recent_blobs(
@@ -31,7 +32,7 @@ def select_recent_blobs(
         raise ValueError("Source limits must be positive and the time window ordered")
     selected = []
     total_bytes = 0
-    for scanned, blob in enumerate(container.list_blobs(name_starts_with="coinbase/"), 1):
+    for scanned, blob in enumerate(_list_window(container, start, end), 1):
         if scanned > max_scan:
             raise ValueError("Bronze listing exceeds the scan limit; no snapshot was published")
         if not blob.name.endswith(".jsonl") or not start <= blob.last_modified <= end:
@@ -45,6 +46,25 @@ def select_recent_blobs(
     if not selected:
         raise ValueError("No Bronze batches exist in the requested window; keeping the existing snapshot")
     return sorted(selected, key=lambda blob: blob.name)
+
+
+def bronze_window_prefixes(start: datetime, end: datetime) -> list[str]:
+    """Hour folders covering [start, end], plus the hour before start.
+
+    A batch is named when its upload begins, so a retry that crosses an hour
+    boundary can land in the previous hour's folder with a later timestamp.
+    """
+    hour = start.astimezone(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    prefixes = []
+    while hour <= end:
+        prefixes.append(bronze_hour_prefix(hour))
+        hour += timedelta(hours=1)
+    return prefixes
+
+
+def _list_window(container, start: datetime, end: datetime):
+    for prefix in bronze_window_prefixes(start, end):
+        yield from container.list_blobs(name_starts_with=prefix)
 
 
 def download_bronze(container, blobs: list, destination: Path) -> None:

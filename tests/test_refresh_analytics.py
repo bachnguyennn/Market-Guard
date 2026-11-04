@@ -9,56 +9,96 @@ import pytest
 from azure.core import MatchConditions
 from azure.core.exceptions import HttpResponseError
 from marketguard import refresh_analytics as refresh
+from marketguard.storage import bronze_hour_prefix
 
 NOW = datetime(2026, 10, 15, 12, tzinfo=UTC)
 
 
-def batch(name="coinbase/batch.jsonl", modified=NOW, size=5):
+def batch(name="batch.jsonl", modified=NOW, size=5):
+    """A Bronze batch stored in the hour folder of its upload time."""
+    if not name.startswith("coinbase/"):
+        name = bronze_hour_prefix(modified) + name
     return SimpleNamespace(name=name, last_modified=modified, size=size, etag='"version-1"')
+
+
+def bronze(*blobs):
+    """Fake container whose list_blobs honours name_starts_with like Azure."""
+    container = Mock()
+    container.list_blobs.side_effect = lambda name_starts_with: [
+        blob for blob in blobs if blob.name.startswith(name_starts_with)
+    ]
+    return container
 
 
 def test_selection_filters_ingestion_window_and_jsonl_names():
     recent = batch()
-    boundary = batch("coinbase/start.jsonl", NOW - timedelta(hours=6))
-    container = Mock()
-    container.list_blobs.return_value = [
-        recent, batch("coinbase/old.jsonl", NOW - timedelta(hours=7)),
-        batch("coinbase/future.jsonl", NOW + timedelta(seconds=1)),
-        batch("coinbase/notes.txt"), boundary,
-    ]
+    boundary = batch("start.jsonl", NOW - timedelta(hours=6))
+    container = bronze(
+        recent, batch("old.jsonl", NOW - timedelta(hours=7)),
+        batch("future.jsonl", NOW + timedelta(seconds=1)),
+        batch("notes.txt"), boundary,
+    )
     selected = refresh.select_recent_blobs(container, NOW - timedelta(hours=6), NOW)
-    assert selected == [recent, boundary]
-    container.list_blobs.assert_called_once_with(name_starts_with="coinbase/")
+    assert selected == sorted([recent, boundary], key=lambda blob: blob.name)
+
+
+def test_selection_lists_only_hour_folders_in_the_window():
+    container = bronze(batch())
+    refresh.select_recent_blobs(container, NOW - timedelta(hours=6), NOW)
+    listed = [call.kwargs["name_starts_with"] for call in container.list_blobs.call_args_list]
+    # 06:00..12:00 plus one hour of slack before the start.
+    assert listed == [f"coinbase/2026/10/15/{hour:02d}/" for hour in range(5, 13)]
+
+
+def test_legacy_flat_batches_are_never_listed():
+    container = bronze(SimpleNamespace(
+        name="coinbase/batch_legacy.jsonl", last_modified=NOW, size=5, etag='"v"',
+    ))
+    with pytest.raises(ValueError, match="keeping the existing snapshot"):
+        refresh.select_recent_blobs(container, NOW - timedelta(hours=6), NOW)
+
+
+def test_upload_that_crossed_into_the_next_hour_is_still_found():
+    late = SimpleNamespace(
+        name=bronze_hour_prefix(NOW - timedelta(hours=7)) + "slow.jsonl",
+        last_modified=NOW - timedelta(hours=6) + timedelta(seconds=3), size=5, etag='"v"',
+    )
+    container = bronze(late)
+    start = NOW - timedelta(hours=6) + timedelta(seconds=1)
+    assert refresh.select_recent_blobs(container, start, NOW) == [late]
+
+
+def test_window_prefixes_span_midnight_in_utc():
+    assert refresh.bronze_window_prefixes(
+        datetime(2026, 10, 15, 0, 30, tzinfo=UTC), datetime(2026, 10, 15, 1, 0, tzinfo=UTC),
+    ) == ["coinbase/2026/10/14/23/", "coinbase/2026/10/15/00/", "coinbase/2026/10/15/01/"]
 
 
 @pytest.mark.parametrize("limits", [
     {"max_scan": 1}, {"max_batches": 1}, {"max_bytes": 9},
 ])
 def test_selection_never_silently_truncates_when_limit_is_exceeded(limits):
-    container = Mock()
-    container.list_blobs.return_value = [batch(), batch("coinbase/second.jsonl")]
+    container = bronze(batch(), batch("second.jsonl"))
     with pytest.raises(ValueError, match="limit"):
         refresh.select_recent_blobs(container, NOW - timedelta(hours=6), NOW, **limits)
 
 
 def test_scan_limit_also_counts_old_batches():
-    container = Mock()
-    container.list_blobs.return_value = [batch(modified=NOW - timedelta(days=1))] * 3
+    old = batch(modified=NOW - timedelta(hours=6, minutes=30))
+    container = bronze(old, old, old)
     with pytest.raises(ValueError, match="scan limit"):
         refresh.select_recent_blobs(container, NOW - timedelta(hours=6), NOW, max_scan=2)
 
 
 @pytest.mark.parametrize("size", [0, -1])
 def test_empty_or_invalid_source_batches_are_rejected(size):
-    container = Mock()
-    container.list_blobs.return_value = [batch(size=size)]
+    container = bronze(batch(size=size))
     with pytest.raises(ValueError, match="empty or unversioned"):
         refresh.select_recent_blobs(container, NOW - timedelta(hours=6), NOW)
 
 
 def test_no_recent_batches_preserves_the_existing_snapshot():
-    container = Mock()
-    container.list_blobs.return_value = []
+    container = bronze()
     with pytest.raises(ValueError, match="keeping the existing snapshot"):
         refresh.select_recent_blobs(container, NOW - timedelta(hours=6), NOW)
 
@@ -100,11 +140,10 @@ def test_changed_or_incomplete_downloads_abort_without_a_jsonl_file(tmp_path, fa
 @pytest.fixture
 def setup(monkeypatch, tmp_path):
     service = Mock()
-    bronze = Mock()
-    bronze.list_blobs.return_value = [batch()]
+    source = bronze(batch())
     dashboard = Mock()
     dashboard.get_blob_client.return_value.exists.return_value = True
-    service.get_container_client.side_effect = {"bronze": bronze, "dashboard": dashboard}.__getitem__
+    service.get_container_client.side_effect = {"bronze": source, "dashboard": dashboard}.__getitem__
     gold = pd.DataFrame({"minute_start": pd.to_datetime(["2026-10-15T12:00Z"]), "trade_count": [3]})
     anomalies = pd.DataFrame({"is_anomaly": [False]})
     mocks = {
@@ -123,7 +162,7 @@ def setup(monkeypatch, tmp_path):
     }
     for name, mock in mocks.items():
         monkeypatch.setattr(refresh, name, mock)
-    return SimpleNamespace(service=service, bronze=bronze, dashboard=dashboard, mocks=mocks, root=tmp_path)
+    return SimpleNamespace(service=service, bronze=source, dashboard=dashboard, mocks=mocks, root=tmp_path)
 
 
 def test_default_dry_run_reads_but_never_uploads(setup):
