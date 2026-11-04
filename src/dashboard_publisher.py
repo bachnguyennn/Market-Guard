@@ -72,8 +72,10 @@ def publish_exports(service: BlobServiceClient, files: dict[str, Path]) -> list[
         container.create_container()
     except ResourceExistsError:
         pass
-    if container.get_container_properties()["public_access"] is not None:
-        raise ValueError("The dashboard container must be private; refusing to upload")
+    # Private or anonymous blob-read (what the public dashboard uses) are allowed;
+    # container-level access would also let anyone list the container, so refuse it.
+    if container.get_container_properties()["public_access"] not in (None, "blob"):
+        raise ValueError("The dashboard container must be private or blob-level public read; refusing to upload")
     published = []
     for name, payload in payloads.items():
         blob = container.get_blob_client(name)

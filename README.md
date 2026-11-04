@@ -108,7 +108,8 @@ Azure storage/download/request charges can still apply.
    each container's **Access control (IAM)**, grant that same identity:
    - `bronze`: **Storage Blob Data Reader**.
    - `dashboard`: **Storage Blob Data Contributor**.
-   Keep `dashboard` private. Management-plane Contributor alone is insufficient.
+   `dashboard` may be private or blob-level public read (the publisher refuses
+   container-level/listable access). Management-plane Contributor alone is insufficient.
    An administrator may need to assign these roles; allow time for propagation.
 
 ### First dry run, then publish

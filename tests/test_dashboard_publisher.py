@@ -110,15 +110,23 @@ def test_publish_creates_or_reuses_private_container_and_verifies_both_uploads(a
     assert all(len(item["sha256"]) == 64 for item in result)
 
 
-@pytest.mark.parametrize("public_access", ["blob", "container"])
-def test_existing_public_container_is_never_used(azure_setup, public_access):
+def test_listable_public_container_is_never_used(azure_setup):
     service, container, blobs, files = azure_setup
     container.create_container.side_effect = ResourceExistsError("already exists")
-    container.get_container_properties.return_value = {"public_access": public_access}
-    with pytest.raises(ValueError, match="must be private"):
+    container.get_container_properties.return_value = {"public_access": "container"}
+    with pytest.raises(ValueError, match="must be private or blob-level"):
         publish_exports(service, files)
     for blob in blobs.values():
         blob.upload_blob.assert_not_called()
+
+
+def test_blob_level_public_read_container_is_allowed(azure_setup):
+    service, container, blobs, files = azure_setup
+    container.create_container.side_effect = ResourceExistsError("already exists")
+    container.get_container_properties.return_value = {"public_access": "blob"}
+    publish_exports(service, files)
+    for blob in blobs.values():
+        blob.upload_blob.assert_called_once()
 
 
 def test_missing_second_file_prevents_all_azure_operations(azure_setup):
