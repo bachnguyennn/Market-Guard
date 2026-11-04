@@ -23,13 +23,20 @@ def _now() -> pd.Timestamp:
     return pd.Timestamp.now(tz="UTC")
 
 
-def validate_settings(settings) -> tuple[str, str, str]:
+def validate_settings(settings) -> tuple[str, str, str | None]:
+    """Return (endpoint, container, token); token is None for anonymous public-read access."""
     if not isinstance(settings, Mapping):
         raise AzureSnapshotError("The Azure secrets section must be a TOML table.")
-    values = [settings.get(field) for field in ("account_url", "container", "sas_token")]
+    values = [settings.get(field) for field in ("account_url", "container")]
     if any(not isinstance(value, str) or not value.strip() for value in values):
-        raise AzureSnapshotError("Set account_url, container, and sas_token in the Azure secrets section.")
-    account_url, container, token = [value.strip() for value in values]
+        raise AzureSnapshotError(
+            "Set account_url and container in the Azure secrets section (sas_token is optional)."
+        )
+    account_url, container = [value.strip() for value in values]
+    token = settings.get("sas_token")
+    if token is not None and not isinstance(token, str):
+        raise AzureSnapshotError("The Azure sas_token must be a string or omitted.")
+    token = token.strip() if token else ""
     try:
         address = urlsplit(account_url)
         port = address.port
@@ -44,6 +51,9 @@ def validate_settings(settings) -> tuple[str, str, str]:
         raise AzureSnapshotError("Azure account_url must be a plain HTTPS Blob Storage account endpoint.")
     if not re.fullmatch(r"[a-z0-9](?:[a-z0-9]|-(?!-)){1,61}[a-z0-9]", container):
         raise AzureSnapshotError("The Azure container name is invalid.")
+    if not token:
+        # Anonymous mode: the container must allow public blob read access.
+        return account_url.rstrip("/"), container, None
     token = token.removeprefix("?")
     fields = parse_qs(token)
     permissions = fields.get("sp", [""])[0]
@@ -110,7 +120,7 @@ def read_snapshot(container) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
 
 
 @st.cache_data(ttl=60, max_entries=8, show_spinner=False)
-def _cached_snapshot(account_url: str, container: str, credential_fingerprint: str, _sas_token: str):
+def _cached_snapshot(account_url: str, container: str, credential_fingerprint: str, _sas_token: str | None):
     try:
         from azure.core.exceptions import AzureError
         from azure.storage.blob import BlobServiceClient
@@ -124,14 +134,15 @@ def _cached_snapshot(account_url: str, container: str, credential_fingerprint: s
             return read_snapshot(service.get_container_client(container))
     except AzureError:
         raise AzureSnapshotError(
-            "Unable to read Azure snapshots. Check the read-only SAS, expiry, container access, "
+            "Unable to read Azure snapshots. Check that the container allows public read access "
+            "(or that the optional read-only SAS is valid and unexpired), "
             "and that the publisher uploaded latest/snapshot.json. No fallback data is being shown."
         ) from None
 
 
 def load_azure_snapshot(settings):
     account_url, container, token = validate_settings(settings)
-    fingerprint = sha256(token.encode("utf-8")).hexdigest()
+    fingerprint = sha256(token.encode("utf-8")).hexdigest() if token else "anonymous"
     return _cached_snapshot(account_url, container, fingerprint, _sas_token=token)
 
 

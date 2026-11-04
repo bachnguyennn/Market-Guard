@@ -227,4 +227,47 @@ def test_partial_azure_secrets_show_configuration_error_instead_of_demo():
     page.run()
     assert not page.exception
     assert not page.metric
-    assert "Set account_url, container, and sas_token" in page.error[0].value
+    assert "Set account_url and container" in page.error[0].value
+
+
+def anonymous_settings():
+    return {"account_url": "https://example.blob.core.windows.net", "container": "dashboard"}
+
+
+@pytest.mark.parametrize("token", [None, "", "   "])
+def test_missing_or_blank_sas_selects_anonymous_public_read(token):
+    configuration = anonymous_settings()
+    if token is not None:
+        configuration["sas_token"] = token
+    assert azure_loader.validate_settings(configuration) == (
+        "https://example.blob.core.windows.net", "dashboard", None,
+    )
+
+
+def test_non_string_sas_is_rejected():
+    with pytest.raises(azure_loader.AzureSnapshotError, match="string or omitted"):
+        azure_loader.validate_settings({**anonymous_settings(), "sas_token": 123})
+
+
+def test_anonymous_mode_still_validates_endpoint_and_container():
+    for overrides in [{"account_url": "http://example.blob.core.windows.net"}, {"container": "Bad_Name"}]:
+        with pytest.raises(azure_loader.AzureSnapshotError):
+            azure_loader.validate_settings({**anonymous_settings(), **overrides})
+
+
+def test_anonymous_mode_uses_no_credential_and_caches(sdk_mock):
+    client, reader = sdk_mock
+    azure_loader.load_azure_snapshot(anonymous_settings())
+    azure_loader.load_azure_snapshot(anonymous_settings())
+    assert reader.call_count == 1
+    assert client.call_args.kwargs["credential"] is None
+
+
+def test_anonymous_azure_ui_renders_snapshot(monkeypatch, snapshot):
+    monkeypatch.setattr(azure_loader, "load_azure_snapshot", Mock(return_value=snapshot))
+    page = AppTest.from_file(str(PROJECT_ROOT / "streamlit_app.py"))
+    page.secrets["azure"] = anonymous_settings()
+    page.run()
+    assert not page.exception
+    assert page.tabs[0].metric[0].value == "7"
+    assert "Azure analytics snapshot" in page.info[0].value

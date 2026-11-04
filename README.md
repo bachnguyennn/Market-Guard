@@ -73,8 +73,9 @@ small batch output may not contain enough history for statistical alerts.
 The first verified Azure publication contained two Gold rows, two evaluated
 anomaly rows, and zero flagged alerts, with latest market minute
 `2026-10-14 21:35 UTC`. Both uploaded blobs were downloaded and matched the
-local exports byte-for-byte; the destination container was checked as private.
-Exports remain ignored by Git. SAS rotation and scheduled analytics refreshes
+local exports byte-for-byte. The `dashboard` container was later switched to
+anonymous public blob read so the website no longer depends on an expiring
+SAS (see below). Exports remain ignored by Git. Scheduled analytics refreshes
 are not automated. Never put SAS tokens in source control or logs.
 
 ```sh
@@ -168,8 +169,9 @@ dashboard dependencies and retains summary artifacts for seven days.
   and a statistical alert is not proof of fraud.
 
 Scheduling is intentionally deferred until a manual dry run and publication
-both succeed in GitHub. Dashboard SAS renewal is **still manual**: refreshing
-analytics does not extend the read-only token in Streamlit Secrets.
+both succeed in GitHub. The dashboard reads the `dashboard` container
+anonymously (public blob read), so no token renewal is needed; see
+[Connect the public dashboard to Azure](#connect-the-public-dashboard-to-azure).
 
 ## Connect the public dashboard to Azure
 
@@ -183,35 +185,62 @@ Make sure the Cloud deployment rebuilds its environment after these changes.
 
 1. Run the publisher again so `latest/snapshot.json` exists beside both Parquet
    files. Old publications without a manifest are deliberately rejected.
-2. Generate a short-lived, HTTPS-only **read-only container SAS** locally using
-   your Azure login. Run the following yourself; its output is a secret, not
-   something to paste into chat, a GitHub issue, or a commit:
+2. Make **only the `dashboard` container** publicly readable (anonymous
+   blob-level read, no listing). It holds nothing but the derived snapshot
+   that the public website already displays; `bronze` and any other
+   container stay private. Run once with your Azure login:
 
 ```sh
-EXPIRY=$(.venv-dashboard/bin/python -c 'from datetime import UTC, datetime, timedelta; print((datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%MZ"))')
+# Allow containers in this account to opt in to public read (each container stays private unless set).
+az storage account update --name stmarketguard3b4d59fa \
+  --resource-group rg-marketguard-dev --allow-blob-public-access true
+# Opt in the dashboard container only: anonymous blob reads, no container listing.
+az storage container set-permission --account-name stmarketguard3b4d59fa \
+  --name dashboard --public-access blob --auth-mode login
+# Verify: dashboard shows "blob", bronze shows nothing (private).
+az storage container list --account-name stmarketguard3b4d59fa --auth-mode login \
+  --query "[].{name:name, public:properties.publicAccess}" -o table
+```
+
+> **Why public read instead of a SAS?** A user-delegation SAS expires after at
+> most 7 days, and Streamlit Community Cloud has no API to rotate secrets, so a
+> SAS-based dashboard breaks silently every week until someone pastes a new
+> token. The original 1-day SAS expired this way on 2026-10-16. Because the
+> snapshot is already public on the website, anonymous read adds no exposure.
+> Never enable public access on `bronze`; the publisher still writes with
+> Azure login/OIDC, and anonymous users cannot write, delete, or list.
+
+3. In Community Cloud app settings, add the following through **Secrets**.
+   No token is needed. A template is also in `deploy/azure-secrets.example.toml`.
+
+```toml
+[azure]
+account_url = "https://stmarketguard3b4d59fa.blob.core.windows.net"
+container = "dashboard"
+```
+
+<details>
+<summary>Optional: keep the container private and use a read-only SAS instead</summary>
+
+If public access is blocked by tenant policy or you want the container private,
+add `sas_token` to the `[azure]` section. Generate it yourself (the output is a
+secret; never paste it into chat, issues, or commits). User-delegation SAS
+tokens last **at most 7 days**, so you must rotate it in Streamlit Secrets
+before it expires or the dashboard shows an "expired" error:
+
+```sh
+EXPIRY=$(.venv-dashboard/bin/python -c 'from datetime import UTC, datetime, timedelta; print((datetime.now(UTC) + timedelta(days=7)).strftime("%Y-%m-%dT%H:%MZ"))')
 az storage container generate-sas \
   --account-name stmarketguard3b4d59fa --name dashboard \
   --permissions r --https-only --expiry "$EXPIRY" \
   --auth-mode login --as-user --output tsv
 ```
 
-The reader knows the three blob paths, so list permission is unnecessary;
-`rl` also works, but write/delete permissions and account keys are rejected.
-Creating a user-delegation SAS requires permission to generate a delegation
-key at the storage-account scope. If denied, ask an administrator for narrowly
-scoped access rather than using an account key. See Microsoft's
+The reader rejects write/delete permissions and account keys; `r` or `rl` work.
+See Microsoft's
 [user-delegation SAS guidance](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blob-user-delegation-sas-create-cli).
 
-3. In Community Cloud app settings, add the following through **Secrets**,
-   replacing only the placeholder with the token. A safe template is also in
-   `deploy/azure-secrets.example.toml`.
-
-```toml
-[azure]
-account_url = "https://stmarketguard3b4d59fa.blob.core.windows.net"
-container = "dashboard"
-sas_token = "YOUR_READ_ONLY_CONTAINER_SAS"
-```
+</details>
 
 See [Streamlit secrets management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
 For local testing, put the actual values in ignored `.streamlit/secrets.toml`.
@@ -234,9 +263,10 @@ The website reports the latest **market minute from Gold**, snapshot publication
 time, download time, and source-data age separately. Data over 30 minutes old
 gets a warning; that threshold is a display safeguard, not an ingestion SLA.
 It never labels stored data as a continuous live feed or claims the collector
-is running. SAS tokens expire after the requested day: rotate the secret before
-expiry. Durable renewable authentication and scheduled refreshes remain future
-work; no collector, scheduling, or production infrastructure is changed here.
+is running. With public read there is no token to expire; if you opted into a
+SAS instead, rotate it before expiry. Scheduled refreshes remain future work;
+run the **Refresh dashboard analytics** workflow with `publish` checked to
+update the snapshot.
 
 ```sh
 .venv/bin/python -m pytest tests/test_azure_dashboard.py tests/test_dashboard_publisher.py tests/test_public_dashboard.py tests/test_public_deployment.py tests/test_dashboard.py tests/test_dashboard_data.py -v
