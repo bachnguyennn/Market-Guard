@@ -195,8 +195,10 @@ Make sure the Cloud deployment rebuilds its environment after these changes.
 az storage account update --name stmarketguard3b4d59fa \
   --resource-group rg-marketguard-dev --allow-blob-public-access true
 # Opt in the dashboard container only: anonymous blob reads, no container listing.
-az storage container set-permission --account-name stmarketguard3b4d59fa \
-  --name dashboard --public-access blob --auth-mode login
+# (Uses the management plane, so it works with `az login`; `az storage container
+# set-permission` only accepts the account key, which this project avoids.)
+az storage container-rm update --storage-account stmarketguard3b4d59fa \
+  --resource-group rg-marketguard-dev --name dashboard --public-access blob
 # Verify: dashboard shows "blob", bronze shows nothing (private).
 az storage container list --account-name stmarketguard3b4d59fa --auth-mode login \
   --query "[].{name:name, public:properties.publicAccess}" -o table
