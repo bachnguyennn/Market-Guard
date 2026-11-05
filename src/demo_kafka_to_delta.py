@@ -8,7 +8,7 @@ from uuid import uuid4
 from confluent_kafka import Producer
 from confluent_kafka.admin import AdminClient, NewTopic
 
-from .anomoly_pipeline import build_anomaly_table
+from .anomoly_pipeline import DEMO_LOOKBACK_MINUTES, build_anomaly_table
 from .demo_publisher import publish_trades
 from .run_pipeline import write_and_verify
 from .spark.bronze_to_silver import calculate_market_metrics
@@ -94,7 +94,7 @@ def main() -> None:
             calculate_market_metrics(silver_df), output_dir / "gold"
         )
         anomalies_df, anomaly_count = write_and_verify(
-            build_anomaly_table(gold_df), output_dir / "anomalies"
+            build_anomaly_table(gold_df, lookback=DEMO_LOOKBACK_MINUTES), output_dir / "anomalies"
         )
         summary = {
             "topic": topic,

@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pandas as pd
-from marketguard.anomoly_pipeline import build_anomaly_table
+from marketguard.anomoly_pipeline import DEMO_LOOKBACK_MINUTES, build_anomaly_table
 from marketguard.demo_data import synthetic_market_history
 from marketguard.demo_verifier import verify_gold_records
 from marketguard.run_pipeline import write_and_verify
@@ -35,7 +35,10 @@ def main() -> None:
         with TemporaryDirectory(prefix="marketguard-public-demo-") as temporary:
             temporary_path = Path(temporary)
             gold, _ = write_and_verify(calculate_market_metrics(silver), temporary_path / "gold")
-            write_and_verify(build_anomaly_table(gold), temporary_path / "anomalies")
+            write_and_verify(
+                build_anomaly_table(gold, lookback=DEMO_LOOKBACK_MINUTES),
+                temporary_path / "anomalies",
+            )
             verify_gold_records(trades, [row.asDict() for row in gold.selectExpr(
                 "*", "cast(minute_start as long) as minute_epoch",
             ).collect()])

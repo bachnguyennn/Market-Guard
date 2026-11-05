@@ -3,23 +3,30 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from .spark.anomoly_detection import (
+    DEFAULT_LOOKBACK_MINUTES,
     calculate_price_returns,
     detect_statistical_price_jumps,
     detect_volume_spikes,
 )
 from .spark.data_quality import assign_continuous_segments, detect_missing_minutes
 
+# The synthetic demos cover 15 minutes, too short for the live lookback.
+DEMO_LOOKBACK_MINUTES = 5
 
-def build_anomaly_table(gold_df: DataFrame) -> DataFrame:
+
+def build_anomaly_table(
+    gold_df: DataFrame,
+    lookback: int = DEFAULT_LOOKBACK_MINUTES,
+) -> DataFrame:
     """
     Build unified anomaly indicators from
     one-minute Gold market metrics.
     """
 
     quality_df = assign_continuous_segments(detect_missing_minutes(gold_df))
-    volume_df = detect_volume_spikes(quality_df)
+    volume_df = detect_volume_spikes(quality_df, lookback=lookback)
     returns_df = calculate_price_returns(volume_df)
-    scored_df = detect_statistical_price_jumps(returns_df)
+    scored_df = detect_statistical_price_jumps(returns_df, lookback=lookback)
 
     is_volume_spike = F.col("is_volume_spike")
     is_price_jump = F.col("is_statistical_price_jump")

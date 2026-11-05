@@ -171,6 +171,15 @@ dashboard dependencies and retains summary artifacts for seven days.
 - GitHub serializes this workflow's refreshes. Do not run another publisher
   concurrently. The 25-minute job timeout bounds runner work; a timeout during
   publishing may require a new successful run to restore a matched snapshot.
+- Detectors score each minute against the previous 60 consecutive minutes for
+  that product: log notional volume (upward spikes) and one-minute returns (both
+  directions), each as a robust z-score using the rolling median and MAD, with a
+  cutoff of 4. The mean absolute deviation replaces a zero MAD, and fully flat
+  history stays unscored. The first hour of each window or post-gap segment is
+  unscored, so a 1-hour lookback produces no alerts. The 15-minute synthetic
+  demos use a 5-minute lookback instead. The defaults came from one five-hour
+  sample (86 alerts down to 18, or 14.4% to 3.7% of scored rows) with no labelled
+  events, so they reduce noise but are not a measured detection rate.
 - Rolling detectors still require sufficient consecutive historical minutes.
   Window-edge/partial-minute collection is not an ingestion-health guarantee,
   and a statistical alert is not proof of fraud.
