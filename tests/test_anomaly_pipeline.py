@@ -73,7 +73,7 @@ def test_build_anomaly_table_classifies_all_anomaly_types(spark):
         "base_volume double, notional_volume double, vwap double",
     )
 
-    anomaly_df = build_anomaly_table(gold_df)
+    anomaly_df = build_anomaly_table(gold_df, lookback=5)
     anomaly_df.show(truncate=False)
     assert anomaly_df.count() == gold_df.count()
     assert anomaly_df.select("product_id", "minute_start").distinct().count() == (
@@ -129,7 +129,7 @@ def test_build_anomaly_table_resets_history_after_a_data_gap(spark):
         "base_volume double, notional_volume double, vwap double",
     )
 
-    gap_row = build_anomaly_table(gold_df).orderBy("minute_start").collect()[-1]
+    gap_row = build_anomaly_table(gold_df, lookback=5).orderBy("minute_start").collect()[-1]
 
     assert gap_row.missing_minutes == 4
     assert gap_row.is_data_gap is True
@@ -139,3 +139,21 @@ def test_build_anomaly_table_resets_history_after_a_data_gap(spark):
     assert gap_row.return_zscore is None
     assert gap_row.is_anomaly is False
     assert gap_row.anomaly_type == "NONE"
+
+
+def test_build_anomaly_table_defaults_to_a_full_hour_of_history(spark):
+    start = datetime(2026, 10, 14, 12, 0)
+    volumes = [100.0 + (minute % 7) for minute in range(60)] + [100_000.0]
+    rows = [
+        ("BTC-USD", start + timedelta(minutes=minute), 1, 1.0, volume, 100.0 + (minute % 5))
+        for minute, volume in enumerate(volumes)
+    ]
+    gold_df = spark.createDataFrame(
+        rows,
+        ["product_id", "minute_start", "trade_count", "base_volume", "notional_volume", "vwap"],
+    )
+
+    result = build_anomaly_table(gold_df).orderBy("minute_start").collect()
+
+    assert all(row.volume_zscore is None for row in result[:60])
+    assert result[60].is_volume_spike is True

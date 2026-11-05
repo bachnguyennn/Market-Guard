@@ -60,7 +60,7 @@ def test_batch_pipeline_persists_verified_outputs_and_detects_anomaly(spark, tmp
     )
     output_dir = tmp_path / "outputs"
 
-    summary = run_batch(spark, bronze_path, output_dir)
+    summary = run_batch(spark, bronze_path, output_dir, anomaly_lookback=5)
 
     assert summary["bronze_count"] == 12
     assert summary["silver_count"] == 9

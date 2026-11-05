@@ -6,6 +6,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from .anomoly_pipeline import build_anomaly_table
+from .spark.anomoly_detection import DEFAULT_LOOKBACK_MINUTES
 from .spark.bronze_to_silver import calculate_market_metrics, transform_trades
 from .spark.streaming_pipeline import RAW_TRADE_SCHEMA
 
@@ -38,6 +39,7 @@ def run_batch(
     spark: SparkSession,
     bronze_path: str | Path,
     output_dir: str | Path,
+    anomaly_lookback: int = DEFAULT_LOOKBACK_MINUTES,
 ) -> dict:
     """Run a finite local Bronze-to-anomalies batch and verify every output."""
     bronze_path = Path(bronze_path).resolve()
@@ -64,7 +66,7 @@ def run_batch(
     if aggregated_count != silver_count:
         raise RuntimeError("Gold trade counts do not match the Silver record count")
 
-    anomaly_df = build_anomaly_table(saved_gold)
+    anomaly_df = build_anomaly_table(saved_gold, lookback=anomaly_lookback)
     saved_anomalies, anomaly_count = write_and_verify(anomaly_df, anomaly_path)
     if anomaly_count != gold_count:
         raise RuntimeError("Anomaly output does not preserve the Gold record count")

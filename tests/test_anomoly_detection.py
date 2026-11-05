@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 from datetime import datetime, timedelta
@@ -317,3 +318,101 @@ def test_detect_statistical_price_jumps_validates_parameters(
             lookback=lookback,
             threshold=threshold,
         )
+
+
+def _volume_rows(volumes):
+    start = datetime(2026, 10, 14, 12, 0)
+    return [
+        ("BTC-USD", start + timedelta(minutes=minute), Decimal(str(volume)))
+        for minute, volume in enumerate(volumes)
+    ]
+
+
+def test_detect_volume_spikes_is_not_masked_by_an_earlier_spike(spark):
+    volumes = [95, 100, 105, 110, 90, 100, 10_000, 98, 102, 10_000]
+    gold_df = spark.createDataFrame(
+        _volume_rows(volumes), ["product_id", "minute_start", "notional_volume"]
+    )
+
+    result = detect_volume_spikes(gold_df, lookback=6, threshold=4.0).collect()
+
+    assert result[-1].is_volume_spike is True
+
+
+def test_detect_volume_spikes_scores_log_volume_against_median_and_mad(spark):
+    gold_df = spark.createDataFrame(
+        _volume_rows([110, 90, 105, 95, 100, 1_000_000]),
+        ["product_id", "minute_start", "notional_volume"],
+    )
+
+    last_row = detect_volume_spikes(gold_df, lookback=5, threshold=4.0).collect()[-1]
+
+    expected_scale = 1.4826 * math.log(100 / 95)
+    assert last_row.rolling_median == pytest.approx(math.log(100))
+    assert last_row.rolling_scale == pytest.approx(expected_scale)
+    assert last_row.volume_zscore == pytest.approx(
+        (math.log(1_000_000) - math.log(100)) / expected_scale
+    )
+
+
+def test_detect_volume_spikes_averages_the_middle_of_an_even_history(spark):
+    gold_df = spark.createDataFrame(
+        _volume_rows([10, 20, 40, 80, 100]),
+        ["product_id", "minute_start", "notional_volume"],
+    )
+
+    last_row = detect_volume_spikes(gold_df, lookback=4).collect()[-1]
+
+    assert last_row.rolling_median == pytest.approx((math.log(20) + math.log(40)) / 2)
+
+
+def test_detect_volume_spikes_scores_mostly_tied_history(spark):
+    gold_df = spark.createDataFrame(
+        _volume_rows([100, 100, 100, 100, 150, 10_000]),
+        ["product_id", "minute_start", "notional_volume"],
+    )
+
+    last_row = detect_volume_spikes(gold_df, lookback=5, threshold=4.0).collect()[-1]
+
+    expected_scale = 1.253314 * math.log(1.5) / 5
+    assert last_row.rolling_scale == pytest.approx(expected_scale)
+    assert last_row.is_volume_spike is True
+
+
+def test_detect_statistical_price_jumps_scores_mostly_flat_returns(spark):
+    start = datetime(2026, 10, 14, 12, 0)
+    returns_df = spark.createDataFrame(
+        [
+            ("BTC-USD", start + timedelta(minutes=index), value)
+            for index, value in enumerate([0.0, 0.0, 0.0, 0.0, 0.001, 0.05])
+        ],
+        ["product_id", "minute_start", "price_return"],
+    )
+
+    last_row = detect_statistical_price_jumps(returns_df, lookback=5).collect()[-1]
+
+    assert last_row.is_statistical_price_jump is True
+
+
+def test_detect_volume_spikes_leaves_short_history_unscored(spark):
+    gold_df = spark.createDataFrame(
+        _volume_rows([100, 110, 90, 10_000]),
+        ["product_id", "minute_start", "notional_volume"],
+    )
+
+    result = detect_volume_spikes(gold_df).collect()
+
+    assert all(row.volume_zscore is None for row in result)
+    assert not any(row.is_volume_spike for row in result)
+
+
+def test_detect_volume_spikes_leaves_non_positive_volume_unscored(spark):
+    gold_df = spark.createDataFrame(
+        _volume_rows([100, 110, 90, 105, 95, 0]),
+        ["product_id", "minute_start", "notional_volume"],
+    )
+
+    last_row = detect_volume_spikes(gold_df, lookback=5).collect()[-1]
+
+    assert last_row.volume_zscore is None
+    assert last_row.is_volume_spike is False

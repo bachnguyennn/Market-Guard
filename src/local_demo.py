@@ -15,7 +15,7 @@ from uuid import uuid4
 from confluent_kafka import KafkaException, Producer
 from confluent_kafka.admin import AdminClient, NewTopic
 
-from .anomoly_pipeline import build_anomaly_table
+from .anomoly_pipeline import DEMO_LOOKBACK_MINUTES, build_anomaly_table
 from .demo_data import synthetic_market_history
 from .demo_publisher import publish_trades
 from .demo_verifier import verify_demo_outputs
@@ -153,7 +153,9 @@ def run_demo(args) -> dict:
             gold_path = run_dir / "dashboard" / "gold"
             anomaly_path = run_dir / "dashboard" / "anomalies"
             gold_df, _ = write_and_verify(calculate_market_metrics(silver_df), gold_path)
-            write_and_verify(build_anomaly_table(gold_df), anomaly_path)
+            write_and_verify(
+                build_anomaly_table(gold_df, lookback=DEMO_LOOKBACK_MINUTES), anomaly_path
+            )
             verification = verify_demo_outputs(spark, str(silver_path), str(gold_path), str(anomaly_path))
             summary = {
                 "topic": topic, "partition_count": 2, "silver_counts": counts,
