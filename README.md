@@ -155,6 +155,12 @@ dashboard dependencies and retains summary artifacts for seven days.
   folders in its window (plus one hour of slack for uploads that cross an hour
   boundary), so listing cost stays flat as history grows.
   See [Azure's listing API](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blobs-list-python).
+- Best bid and ask quotes from Coinbase's `ticker` channel are written as raw
+  JSONL to a separate `coinbase-quotes/YYYY/MM/DD/HH/` prefix, with a
+  `received_at` timestamp added by the collector. Refreshes do not read them
+  yet. Ticker messages arrive only when trades happen, so quotes can be stale
+  in quiet periods. Quote upload failures are logged and kept in
+  `data/pending_quotes` without stopping trade collection.
 - Batches written before partitioning (flat `coinbase/batch_<uuid>.jsonl`) are
   never listed by the refresh. Right after the collector is redeployed, the
   window only contains data collected since the redeploy.
